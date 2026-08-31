@@ -1,0 +1,29 @@
+# Proprietary / extracted application artifacts
+*.apk
+*.aab
+*.dex
+*.odex
+*.vdex
+*.so
+apktool-output/
+jadx-output/
+decompiled/
+
+# Local captures that may contain device/session-specific data
+captures/private/
+
+# Build output
+bin/
+obj/
+build/
+out/
+.vs/
+
+# Local environment
+local.properties
+*.keystore
+*.jks
+
+# OS / editor
+.DS_Store
+Thumbs.db
