@@ -1,6 +1,6 @@
 # Protocol Notes
 
-This file separates **confirmed protocol facts** from unresolved command-layer work.
+This file separates **confirmed protocol facts** from runtime-dependent protocol state.
 
 ## Confirmed X4 Identity
 
@@ -18,54 +18,79 @@ This file separates **confirmed protocol facts** from unresolved command-layer w
 | Service UUID | `b7860001-11b8-b681-6343-5a6c2286633f` | Confirmed |
 | Write characteristic UUID | `b7860002-11b8-b681-6343-5a6c2286633f` | Confirmed |
 | Read / notify characteristic UUID | `b7860003-11b8-b681-6343-5a6c2286633f` | Confirmed |
-| Client Characteristic Configuration Descriptor | `00002902-0000-1000-8000-00805f9b34fb` | Confirmed |
+| CCCD | `00002902-0000-1000-8000-00805f9b34fb` | Confirmed |
 
-### Static trace
+The Android connection path selects the default Creative B786 UUID family for `Control for SB1815`. `b7860002` is used with `setValue()` + `writeCharacteristic()`, while `b7860003` is registered for notifications and matched in `onCharacteristicChanged()`.
 
-The Android connection path calls an obfuscated selector equivalent to:
+## Confirmed Command Wrapper
 
-`connect(address, bleName)` → select UUID set from `bleName` → `BluetoothDevice.connectGatt(...)`.
+Commands are built as:
 
-The selector has explicit alternate UUID branches for device-name families such as `MF8345`, `MF8380`, `MF8400`, `MF8415`, `SB1820`, and several `EF*` / `MF*` products. `Control for SB1815` does not match any alternate branch, so it takes the default UUID set:
+`feature payload` → `fi/i.W(payload, command, chipset)` → `md/a.i(bytes)` → BLE write characteristic.
 
-- service = `b7860001-...`
-- characteristic B = `b7860002-...`
-- characteristic C = `b7860003-...`
-- descriptor = `00002902-...`
+For the normal X4 path the chipset argument is `MIDAS`.
 
-Direction is established separately by callback behavior:
+### Legacy MIDAS framing
 
-- characteristic B is passed to `setValue(...)` and `BluetoothGatt.writeCharacteristic(...)` → **write**
-- characteristic C is registered with `setCharacteristicNotification(...)` and matched in `onCharacteristicChanged(...)` → **read / notify**
+When the runtime extended-frame flag is false:
 
-### Independent corroboration
+`6A <command> <length_lo> <length_hi> <payload...>`
 
-Public Windows device-enumeration records containing `Control for SB1815` also enumerate the custom BLE service `b7860001-11b8-b681-6343-5a6c2286633f` on the same system. This corroborates the static APK trace.
+MIDAS does not add a second envelope or escaping after this concatenation.
 
-## Transport Behavior Confirmed
+### Extended MIDAS framing
 
-The application ultimately transmits command bytes with:
+A runtime protocol flag can switch the wrapper to an extended frame. The flag starts false and can be enabled by protocol negotiation response handling.
 
-`byte[]` → `BluetoothGattCharacteristic.setValue(...)` → `BluetoothGatt.writeCharacteristic(...)`.
+Extended frames begin with:
 
-Notifications are enabled through the standard CCCD using `ENABLE_NOTIFICATION_VALUE`.
+`5C <command> <length_lo> <length_hi> <payload...>`
 
-## Command Format
+and append three runtime bytes containing sequence/protocol state and CRC information. These suffix bytes are session-dependent and must be generated, not hard-coded.
 
-Not yet resolved.
+## First Traced Control — Direct Mode
 
-| Field | Offset | Size | Status |
-|---|---:|---:|---|
-| Header | — | — | Unresolved |
-| Opcode / command ID | — | — | Unresolved |
-| Payload | — | — | Unresolved |
-| Length | — | — | Unresolved |
-| Checksum/CRC | — | — | Unresolved |
+The Direct Mode UI reaches:
 
-## Current Next Target
+`qg/i2.f(DIRECT_MODE, checked)`
 
-Trace one simple X4 user-visible control from UI action to the exact `byte[]` written to `b7860002-11b8-b681-6343-5a6c2286633f`.
+`DIRECT_MODE.getIndex()` is confirmed as `5` (`0x05`).
+
+The command builder creates:
+
+| State | Raw payload |
+|---|---|
+| OFF | `00 05 00` |
+| ON | `00 05 01` |
+
+The wrapper call is:
+
+`fi/i.W(payload, 57, MIDAS)`
+
+so the command ID is `57` decimal = `0x39`.
+
+### Exact legacy-mode writes
+
+| State | Final BLE write bytes |
+|---|---|
+| OFF | `6A 39 03 00 00 05 00` |
+| ON | `6A 39 03 00 00 05 01` |
+
+These bytes are final for the legacy framing state; `md/a.i()` does not further transform them before the normal X4 BLE write path.
+
+See `apk-analysis/DIRECT_MODE_TRACE_20260831.md` for the full static trace.
+
+## Still Requires Runtime Validation
+
+The APK alone cannot tell us which negotiated framing state a particular X4 firmware session ultimately uses. One runtime capture of a Direct Mode toggle is sufficient to resolve this.
+
+Validation target:
+
+- characteristic: `b7860002-11b8-b681-6343-5a6c2286633f`
+- action: Direct Mode OFF→ON or ON→OFF
+- expected legacy frames: the two seven-byte frames above
+- otherwise: capture the `5C` extended frame and reproduce its sequence/CRC generation
 
 ## Validation Rule
 
-A protocol value becomes **Confirmed** only when supported by a static code path, runtime capture, or independent reproduction. Inferred values remain explicitly labeled until promoted by evidence.
+A device-runtime claim is promoted to **Confirmed** only after static-code evidence plus either a runtime capture or independent reproduction on the X4.
