@@ -2,12 +2,6 @@ name: Build X4 CTCDC Serial Probe ARM64
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - poc/windows-arm64-usb-serial-ctcdc-init
-    paths:
-      - 'src/serial-poc/**'
-      - '.github/workflows/build-serial-poc-arm64.yml'
 
 permissions:
   contents: read
