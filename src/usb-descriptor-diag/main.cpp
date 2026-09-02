@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <winioctl.h>
 #include <setupapi.h>
 #include <initguid.h>
 #include <usbiodef.h>
