@@ -27,4 +27,5 @@ target_link_libraries(x4-usb-diag PRIVATE
     setupapi.lib
     cfgmgr32.lib
     hid.lib
+    ole32.lib
 )
