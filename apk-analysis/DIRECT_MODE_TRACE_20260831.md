@@ -1,4 +1,4 @@
-# X4 Direct Mode Static Trace — 2026-08-31
+# X4 Direct Mode Trace — corrected and runtime validated
 
 APK SHA-256:
 
@@ -10,17 +10,7 @@ The Direct Mode switch listener reaches:
 
 `qg/i2.f(DIRECT_MODE, checked)`
 
-`DIRECT_MODE` is constructed with feature index `5`, and `getIndex()` returns that stored index.
-
-The feature setter converts the switch value and index to bytes and builds exactly three payload bytes:
-
-| Byte | Meaning |
-|---:|---|
-| `0x00` | feature-set operation prefix |
-| `0x05` | `DIRECT_MODE` feature index |
-| `0x00` / `0x01` | OFF / ON |
-
-Therefore the pre-wrapper payloads are confirmed:
+`DIRECT_MODE.getIndex()` is `5` (`0x05`). The feature setter builds three payload bytes:
 
 - OFF: `00 05 00`
 - ON: `00 05 01`
@@ -31,58 +21,50 @@ The payload is passed to:
 
 Decimal `57` is command `0x39`.
 
-## MIDAS legacy frame
+## Correct MIDAS legacy frame
 
-When the negotiated extended-frame flag is false, the MIDAS wrapper calls the header builder equivalent to:
+A previous static reading incorrectly identified the legacy header as `6A` plus a two-byte length. Reinspection and hardware validation corrected this.
 
-`[0x6A, command, length_lo, length_hi]`
+For the X4 Direct Mode path the raw frame is:
 
-MIDAS then concatenates the header and payload without a second envelope or byte escaping.
+`5A <command> <payload_length> <payload...>`
 
-For Direct Mode this gives:
+Therefore:
 
-- OFF: `6A 39 03 00 00 05 00`
-- ON: `6A 39 03 00 00 05 01`
+- OFF: `5A 39 03 00 05 00`
+- ON: `5A 39 03 00 05 01`
 
-These are the exact final bytes for the legacy MIDAS framing state.
+## Physical X4 validation
 
-## Negotiated extended frame
+The hidden Creative Android `DebugProtocolFragment` is a raw hex sender. It converts entered hexadecimal text to a byte array and sends the same bytes to the X4 BLE write path.
 
-The wrapper has a runtime global protocol flag. It starts false, but the response parser for command `0x0F` can promote it to true when the returned protocol payload reports marker `0xFF`.
+On the physical Sound Blaster X4:
 
-When true, the command is not a fixed seven-byte frame. The wrapper uses:
+- `5A3903000500` produced Direct Mode OFF.
+- `5A3903000501` produced Direct Mode ON.
 
-- base header `5C 39 03 00`
-- payload `00 05 00/01`
-- a three-byte runtime suffix containing sequence/protocol state and a lookup-table CRC
+This validates the complete Direct Mode command end-to-end.
 
-So the exact transmitted bytes in this mode depend on live session state.
+## Rejected earlier candidates
 
-Do **not** hard-code one extended-mode frame from static analysis.
+The following are obsolete and must not be used:
 
-## X4 transport-path exclusions
+- `6A390300000500` — no observable response; based on incorrect header/length decoding.
+- `6A390300000501` — same incorrect format.
+- tested `5C` extended Direct Mode candidate — no observable state change.
 
-Other conditionals inside the wrapper belong to alternate product/transport paths:
-
-- `Lbr/a;.c` is associated with the Aurvana/Auria connection path.
-- `Lp3/a;.c` is associated with a separate Actions/IBluz connection path.
-- X4's confirmed BLE path is the `Lxc/a;` path selected as connection type `0`.
-- product-name exception flags in `Lhd/b;` are populated from lists that do not include `Control for SB1815`.
-
-These branches therefore do not define the normal X4 BLE framing choice. The remaining runtime-dependent distinction is the negotiated legacy/extended protocol-frame flag.
+The existence of a `5C` protocol branch elsewhere in the APK remains a separate protocol-analysis topic. It is not required for the confirmed Direct Mode command on the tested X4.
 
 ## Final send path
 
-The result returned by `fi/i.W(...)` is passed through `md/a.i(...)` to the X4 BLE queue. The queue sends the same byte array using:
+The normal X4 BLE write target remains:
 
-`BluetoothGattCharacteristic.setValue(bytes)`
+`b7860002-11b8-b681-6343-5a6c2286633f`
 
-followed by:
+No additional framing is required around the confirmed six-byte Direct Mode commands when reproducing them through the raw sender.
 
-`BluetoothGatt.writeCharacteristic(...)`
+## Status
 
-There is no additional command-byte transformation after `fi/i.W(...)` on the normal X4 BLE path.
+**Direct Mode static trace + physical-device reproduction: COMPLETE.**
 
-## Runtime validation target
-
-Capture one Direct Mode OFF→ON or ON→OFF operation on the actual X4. A single write to characteristic `b7860002-11b8-b681-6343-5a6c2286633f` will determine which negotiated framing mode the X4 firmware is using and will validate the full command chain.
+Next target: reproduce these writes from a minimal Windows ARM64 BLE client.

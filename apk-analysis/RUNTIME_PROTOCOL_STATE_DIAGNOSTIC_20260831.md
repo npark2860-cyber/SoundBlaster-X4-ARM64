@@ -1,55 +1,38 @@
-# X4 Runtime Protocol State Diagnostic — 2026-08-31
+# X4 Runtime Protocol Diagnostic — superseded interpretation
 
-## Runtime result
+## Historical result
 
-On a real Sound Blaster X4, sending the statically derived legacy MIDAS Direct Mode OFF frame
+A diagnostic build was created after the incorrectly decoded frame `6A390300000500` produced no observable response on the physical X4.
 
-`6A390300000500`
-
-through the patched Android Creative App Debug Protocol raw sender produced **no observable response/state change**.
-
-This is direct runtime evidence that the current X4 session is not accepting the legacy `6A` frame for this command path.
-
-## Important transport clarification
-
-`DebugProtocolFragment` sends entered bytes through `md/a.j(byte[])`.
-
-For the active X4 BLE path this reaches `hd/a.h(byte[])`, which writes the same supplied byte array to the X4 BLE write characteristic. No command framing is added by the Debug Protocol path.
-
-Therefore the failed `6A390300000500` test is a valid raw-wire negative result, not a UI parsing failure.
-
-## Extended MIDAS state
-
-`fi/i.W(...)` has a runtime extended-frame branch controlled by:
-
-- `Loi/e;.d` — extended frame enabled flag
-- `Loi/e;.a` — sequence counter A
-- `Loi/e;.c` — protocol/session state value
-
-The extended frame starts with:
-
-`5C <command> <payload_length_lo> <payload_length_hi> ...`
-
-and appends runtime sequence/state bytes plus a lookup-table CRC.
-
-For Direct Mode the logical command remains:
-
-- command: `0x39`
-- OFF payload: `00 05 00`
-- ON payload: `00 05 01`
-
-but the exact raw frame cannot be hard-coded without the live `d/a/c` values.
-
-## Diagnostic APK patch
-
-A diagnostic build was produced that keeps the existing Dashboard module-ID patch used to expose `DebugProtocolFragment` and replaces the hardcoded default Debug Protocol input with one decimal integer encoding the live protocol state:
+The diagnostic build attempted to encode runtime protocol state as:
 
 `state = (extendedFlag << 16) | (sequenceA << 8) | protocolC`
 
-This allows all state required to calculate the next exact extended frame to be recovered from a single screen read without multiple trial packets.
+The displayed value was `-256` because signed byte extension was not masked in the diagnostic packing code. That diagnostic output was therefore not a reliable single-integer representation of all three fields.
 
-Diagnostic APK SHA-256:
+## Correction
+
+The `6A` failure was later explained by a static decoding error, not by proof that Direct Mode required an extended `5C` frame.
+
+Reinspection and direct physical-X4 testing established the actual Direct Mode commands:
+
+- OFF: `5A3903000500`
+- ON: `5A3903000501`
+
+Both commands produced the expected state changes.
+
+A separately calculated `5C` candidate produced no observable state change and is not required for the confirmed Direct Mode path.
+
+## Status
+
+The protocol-state diagnostic is no longer needed for Direct Mode and should not be used to choose between `6A` and `5C` framing for that control.
+
+Authoritative Direct Mode protocol information is in:
+
+- `PROTOCOL.md`
+- `apk-analysis/DIRECT_MODE_TRACE_20260831.md`
+- `captures/RUNTIME_DIRECT_MODE_20260831.md`
+
+Diagnostic APK SHA-256 retained for historical traceability:
 
 `b5bc1bc37a5b18eeffcaa091554d7a389f9e8d55fbc767fdea28d67545ee796d`
-
-The diagnostic APK is signed with the same local test key as the previously supplied Debug Protocol patch, so it can be installed as an update over that patched build.

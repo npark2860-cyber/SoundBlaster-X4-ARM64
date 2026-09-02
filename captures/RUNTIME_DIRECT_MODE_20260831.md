@@ -1,4 +1,4 @@
-# X4 Runtime Validation — Debug Protocol — 2026-08-31
+# X4 Runtime Validation — Debug Protocol
 
 ## Device / app
 
@@ -6,48 +6,51 @@
 - Android Creative App: 2.11.08 Internal Beta
 - Test path: patched Dashboard entry -> existing `DebugProtocolFragment`
 
-## Confirmed runtime observation
+## Raw sender confirmed
 
-`DebugProtocolFragment` is a working raw hexadecimal sender.
+`DebugProtocolFragment` converts the entered hexadecimal string into bytes and sends those bytes through the X4 BLE write path without adding command framing.
 
-The fragment's APK-hardcoded initial command is:
-
-`FF040004000A00C06A030000`
-
-On the physical X4, pressing **SEND** with this exact value produced the user-visible state notification that Direct Mode was turned on.
-
-Therefore the following is runtime-confirmed:
-
-- the hidden Debug Protocol screen can transmit to the X4;
-- the hardcoded command reaches and is accepted by the physical device;
-- sending `FF040004000A00C06A030000` results in an observed Direct Mode ON state/notification on this X4.
-
-## Important distinction
-
-Do not equate the hardcoded Debug Protocol test command with the normal Direct Mode setter yet.
-
-Static tracing of the normal Direct Mode switch independently shows:
-
-- feature index: `0x05`
-- command ID: `0x39`
-- OFF payload: `00 05 00`
-- ON payload: `00 05 01`
-- legacy MIDAS frames:
-  - OFF: `6A390300000500`
-  - ON: `6A390300000501`
-
-The Debug Protocol default command instead contains:
+Its APK-hardcoded initial command is:
 
 `FF040004000A00C06A030000`
 
-Its exact semantic/framing relationship to the normal MIDAS Direct Mode setter is not yet resolved. The observed Direct Mode effect is confirmed; the internal meaning of each field is not.
+Sending that value produced a user-visible Direct Mode ON notification on the physical X4. Its internal field semantics remain unresolved and it is not used as the canonical Direct Mode setter.
 
-## Next discriminating runtime test
+## Direct Mode experiments
 
-Send the statically derived normal legacy Direct Mode OFF frame through Debug Protocol:
+### Rejected static candidates
 
 `6A390300000500`
 
-If the physical X4 turns Direct Mode off, the active normal X4 control path accepts legacy MIDAS framing directly. Then send `6A390300000501` to verify ON.
+- result: no observable response/state change
+- cause: later reinspection showed this frame was built from an incorrect legacy-header/length interpretation
 
-If it does not react, do not vary bytes blindly; investigate the negotiated/outer framing path before further tests.
+A calculated `5C` extended-frame candidate was also tested and produced no observable response/state change. It is not the active Direct Mode format on the tested X4.
+
+### Corrected and confirmed commands
+
+`5A3903000500`
+
+- result: **Direct Mode OFF**
+
+`5A3903000501`
+
+- result: **Direct Mode ON**
+
+This establishes the runtime-confirmed Direct Mode frame:
+
+`5A 39 03 00 05 <state>`
+
+where:
+
+- `0x39` = command ID
+- `0x03` = payload length
+- `0x00 0x05` = set feature / Direct Mode selector
+- state `0x00` = OFF
+- state `0x01` = ON
+
+## Final status
+
+Direct Mode OFF/ON is now independently reproducible on the physical X4 through raw BLE command bytes.
+
+The next validation boundary is no longer Android. It is a minimal Windows ARM64 BLE client sending the same confirmed six-byte commands to characteristic `b7860002-11b8-b681-6343-5a6c2286633f`.
