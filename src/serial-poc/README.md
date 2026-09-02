@@ -1,44 +1,58 @@
-# Sound Blaster X4 Windows ARM64 USB Serial PoC
+# Sound Blaster X4 Windows ARM64 CTCDC Serial Probe
 
-Minimal native Windows ARM64 proof-of-concept for testing the X4's USB-local control path exposed as the Creative CDC/serial interface.
+Read/diagnostic probe for the X4's `USB\\VID_041E&PID_3278&MI_01` CDC serial interface.
 
-## Source of the target port
+This version exists because reverse engineering of Creative's `CTCDC.dll` showed that the previous raw serial PoC did **not** reproduce Creative's serial initialization. CTCDC configures the COM port before sending any protocol frame.
 
-The user's X4 USB diagnostic identified:
+## CTCDC initialization reproduced
 
-- `USB\\VID_041E&PID_3278&MI_01`
-- Windows service: `usbser`
-- current friendly name: `USB Serial Device (COM3)`
+The probe applies:
 
-The executable auto-detects the current COM port belonging to that exact `MI_01` hardware ID, so it is not tied to COM3 if Windows later assigns another number.
+- communication mask `0x05` (`EV_RXCHAR | EV_TXEMPTY`)
+- `115200` baud
+- `8` data bits
+- no parity
+- one stop bit
+- zero COM timeouts
+- `PurgeComm(0x0F)`
+- `EscapeCommFunction(SETDTR)`
 
-## Commands under test
+It then sends CTCDC's first normal protocol probe:
 
-These six-byte frames were already validated against the physical X4 through Creative's Android Debug Protocol path:
+```text
+5A 03 00
+```
 
-- Direct Mode OFF: `5A3903000500`
-- Direct Mode ON: `5A3903000501`
+This is the firmware query used by CTCDC before it decides whether an unlock is needed.
 
-This PoC tests whether Windows' local USB serial interface accepts the same frame directly.
+If no valid command-`0x03` response is received, the tool follows CTCDC only one harmless step further and sends its unlock greeting:
+
+```text
+whoareyou.MyApp8\r\n
+```
+
+It records the response but deliberately stops before generating or sending the cryptographic unlock reply.
 
 ## Run
 
-Connect the X4 by USB, then run:
-
 ```powershell
-.\\x4-serial-poc.exe off
-.\\x4-serial-poc.exe on
+.\\x4-serial-ctcdc-probe.exe
 ```
 
-An explicit port can be supplied for diagnosis:
+The X4 COM port is auto-detected. An explicit port can be supplied:
 
 ```powershell
-.\\x4-serial-poc.exe off COM3
+.\\x4-serial-ctcdc-probe.exe COM3
 ```
 
-The program opens the port with Win32 `CreateFileW` and writes exactly six raw bytes with `WriteFile`. It does not add a delimiter, newline, BLE/GATT framing, or another protocol wrapper.
+Output is written to both the console and:
 
-## Interpretation
+```text
+x4-ctcdc-probe.txt
+```
 
-- If the X4 switches Direct Mode, `MI_01` is confirmed as a usable Windows USB-local transport for this command family.
-- If six bytes are successfully written but the X4 does not react, the USB serial path likely requires additional framing/session setup or a different Windows interface. That result should be treated as a negative transport test, not as evidence that the already hardware-validated `5A39...` command itself is wrong.
+Upload that text file for analysis.
+
+## Safety / scope
+
+This probe does **not** send Direct Mode ON/OFF. It performs only the serial initialization, a firmware query, and when needed the first unlock greeting observed in Creative's own CTCDC implementation.
