@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <objbase.h>
 #include <setupapi.h>
 #include <cfgmgr32.h>
 #include <devpkey.h>
@@ -354,9 +355,9 @@ int run(std::wostream& out)
     return count == 0 ? 20 : 0;
 }
 
-bool save_utf16le(std::wstring const& path, std::wstring const& text)
+bool save_utf16le(std::wstring const& text)
 {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    std::ofstream file("x4-usb-diag.txt", std::ios::binary | std::ios::trunc);
     if (!file)
         return false;
 
@@ -376,7 +377,7 @@ int wmain()
     std::wstring text = report.str();
     std::wcout << text;
 
-    if (!save_utf16le(L"x4-usb-diag.txt", text))
+    if (!save_utf16le(text))
     {
         std::wcerr << L"\nCannot create x4-usb-diag.txt in the current directory.\n";
         return result == 0 ? 2 : result;
