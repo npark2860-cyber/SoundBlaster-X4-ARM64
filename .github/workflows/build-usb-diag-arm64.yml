@@ -2,12 +2,6 @@ name: Build X4 USB Diagnostic ARM64
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - diag/windows-arm64-usb-local
-    paths:
-      - src/usb-diag/**
-      - .github/workflows/build-usb-diag-arm64.yml
 
 permissions:
   contents: read
