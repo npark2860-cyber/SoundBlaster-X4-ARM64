@@ -1,0 +1,60 @@
+name: Build X4 ARM64 PoC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 Release
+    runs-on: windows-2025
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/poc -B build/poc -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/poc --config Release --parallel
+
+      - name: Verify ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/poc/Release/x4-poc.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-poc.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-poc.exe
+          Copy-Item src/poc/README.md dist/README.md
+          Compress-Archive -Path dist/x4-poc.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ARM64-PoC.zip -Force
+
+          $hash = (Get-FileHash dist/SoundBlaster-X4-ARM64-PoC.zip -Algorithm SHA256).Hash
+          "ARM64 PE verified: 0xAA64"
+          "ZIP SHA256: $hash"
+
+      - name: Upload PoC ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ARM64-PoC
+          path: dist/SoundBlaster-X4-ARM64-PoC.zip
+          if-no-files-found: error
+          retention-days: 14
