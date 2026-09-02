@@ -38,7 +38,7 @@ std::wstring get_instance_id(HDEVINFO set, SP_DEVINFO_DATA& info)
     return buf.data();
 }
 
-std::wstring get_string(HANDLE h, BOOL(__stdcall* fn)(HANDLE, PVOID, ULONG))
+std::wstring get_string(HANDLE h, BOOLEAN(__stdcall* fn)(HANDLE, PVOID, ULONG))
 {
     std::array<wchar_t, 256> buf{};
     if (!fn(h, buf.data(), static_cast<ULONG>(buf.size() * sizeof(wchar_t))))
