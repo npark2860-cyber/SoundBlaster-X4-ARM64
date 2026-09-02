@@ -1,0 +1,65 @@
+name: Build X4 USB Descriptor Diagnostic ARM64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - diag/windows-arm64-audio-topology
+    paths:
+      - 'src/usb-descriptor-diag/**'
+      - '.github/workflows/build-usb-descriptor-diag-arm64.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 USB Descriptor Diagnostic
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/usb-descriptor-diag -B build/usb-descriptor-diag -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/usb-descriptor-diag --config Release --parallel
+
+      - name: Verify ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/usb-descriptor-diag/Release/x4-usb-descriptor-diag.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-usb-descriptor-diag.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-usb-descriptor-diag.exe
+          Copy-Item src/usb-descriptor-diag/README.md dist/README.md
+          Compress-Archive -Path dist/x4-usb-descriptor-diag.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-USB-Descriptor-Diagnostic-ARM64.zip -Force
+
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-USB-Descriptor-Diagnostic-ARM64.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload diagnostic ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-USB-Descriptor-Diagnostic-ARM64
+          path: dist/SoundBlaster-X4-USB-Descriptor-Diagnostic-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
