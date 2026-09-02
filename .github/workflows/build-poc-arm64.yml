@@ -2,12 +2,6 @@ name: Build X4 ARM64 PoC
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - poc/windows-arm64-direct-mode
-    paths:
-      - src/poc/**
-      - .github/workflows/build-poc-arm64.yml
 
 permissions:
   contents: read
