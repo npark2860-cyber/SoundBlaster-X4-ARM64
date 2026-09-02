@@ -63,7 +63,7 @@ const wchar_t* status_name(GattCommunicationStatus status)
 IBuffer make_buffer(std::array<uint8_t, 6> const& bytes)
 {
     DataWriter writer;
-    writer.WriteBytes(bytes);
+    writer.WriteBytes(winrt::array_view<uint8_t const>{bytes.data(), bytes.data() + bytes.size()});
     return writer.DetachBuffer();
 }
 
