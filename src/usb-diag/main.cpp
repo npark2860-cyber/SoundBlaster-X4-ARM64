@@ -1,5 +1,6 @@
 #include <windows.h>
 #include <objbase.h>
+#include <initguid.h>
 #include <setupapi.h>
 #include <cfgmgr32.h>
 #include <devpkey.h>
