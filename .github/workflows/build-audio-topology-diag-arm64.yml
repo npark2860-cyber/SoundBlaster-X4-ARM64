@@ -2,12 +2,6 @@ name: Build X4 Audio Topology Diagnostic ARM64
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - diag/windows-arm64-audio-topology
-    paths:
-      - 'src/audio-topology-diag/**'
-      - '.github/workflows/build-audio-topology-diag-arm64.yml'
 
 permissions:
   contents: read
