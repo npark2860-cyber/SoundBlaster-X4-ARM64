@@ -6,6 +6,7 @@
 #include <usbiodef.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cwctype>
 #include <fstream>
 #include <iomanip>
@@ -170,7 +171,7 @@ bool is_relevant(std::wstring const& id,
                  std::map<std::wstring, Node> const& nodes,
                  std::set<std::wstring> const& direct)
 {
-    std::wstring current = id;
+    std::wstring current = upper(id);
     std::set<std::wstring> visited;
 
     for (int depth = 0; depth < 16 && !current.empty(); ++depth)
@@ -183,7 +184,7 @@ bool is_relevant(std::wstring const& id,
         auto it = nodes.find(current);
         if (it == nodes.end())
             break;
-        current = it->second.parentId;
+        current = upper(it->second.parentId);
     }
     return false;
 }
@@ -316,25 +317,25 @@ int run(std::wostream& out)
         n.locationPaths = get_location_paths(info.DevInst);
         CM_Get_DevNode_Status(&n.status, &n.problem, info.DevInst, 0);
 
-        nodes.emplace(n.instanceId, std::move(n));
+        nodes.emplace(upper(n.instanceId), std::move(n));
     }
 
     SetupDiDestroyDeviceInfoList(set);
 
     std::set<std::wstring> direct;
-    for (auto const& [id, node] : nodes)
+    for (auto const& [key, node] : nodes)
     {
         if (direct_match(node))
-            direct.insert(id);
+            direct.insert(key);
     }
 
     out << L"Sound Blaster X4 Windows USB local diagnostic\n";
     out << L"Filter: Creative USB VID_041E, Sound Blaster X4, or SB1815 plus descendants\n\n";
 
     size_t count = 0;
-    for (auto const& [id, node] : nodes)
+    for (auto const& [key, node] : nodes)
     {
-        if (is_relevant(id, nodes, direct))
+        if (is_relevant(key, nodes, direct))
         {
             print_node(out, node);
             ++count;
@@ -352,28 +353,34 @@ int run(std::wostream& out)
     out << L"\nDiagnostic only: no control command was sent to the X4.\n";
     return count == 0 ? 20 : 0;
 }
+
+bool save_utf16le(std::wstring const& path, std::wstring const& text)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file)
+        return false;
+
+    constexpr uint16_t bom = 0xFEFF;
+    file.write(reinterpret_cast<char const*>(&bom), sizeof(bom));
+    file.write(reinterpret_cast<char const*>(text.data()),
+               static_cast<std::streamsize>(text.size() * sizeof(wchar_t)));
+    return file.good();
+}
 } // namespace
 
 int wmain()
 {
-    std::wofstream file("x4-usb-diag.txt", std::ios::binary | std::ios::trunc);
-    if (!file)
-    {
-        std::wcerr << L"Cannot create x4-usb-diag.txt in the current directory.\n";
-        return 2;
-    }
-
     std::wostringstream report;
     int result = run(report);
 
     std::wstring text = report.str();
     std::wcout << text;
 
-    // UTF-16LE with BOM keeps Windows device strings lossless and opens cleanly in Notepad.
-    wchar_t bom = 0xFEFF;
-    file.write(&bom, 1);
-    file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    file.close();
+    if (!save_utf16le(L"x4-usb-diag.txt", text))
+    {
+        std::wcerr << L"\nCannot create x4-usb-diag.txt in the current directory.\n";
+        return result == 0 ? 2 : result;
+    }
 
     std::wcout << L"\nSaved: x4-usb-diag.txt\n";
     return result;
