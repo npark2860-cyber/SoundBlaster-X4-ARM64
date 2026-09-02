@@ -1,29 +1,56 @@
 #include <windows.h>
 #include <setupapi.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cwctype>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "advapi32.lib")
 
 namespace
 {
 constexpr wchar_t kTargetHardwareId[] = L"USB\\VID_041E&PID_3278&MI_01";
-constexpr std::array<std::uint8_t, 6> kDirectModeOff{
-    0x5A, 0x39, 0x03, 0x00, 0x05, 0x00};
-constexpr std::array<std::uint8_t, 6> kDirectModeOn{
-    0x5A, 0x39, 0x03, 0x00, 0x05, 0x01};
+constexpr std::array<std::uint8_t, 3> kFirmwareQuery{0x5A, 0x03, 0x00};
+constexpr std::array<std::uint8_t, 18> kUnlockHello{
+    'w','h','o','a','r','e','y','o','u','.',
+    'M','y','A','p','p','8','\r','\n'};
+
+struct Logger
+{
+    std::ofstream file{"x4-ctcdc-probe.txt", std::ios::binary | std::ios::trunc};
+
+    void line(std::string const& text = {})
+    {
+        std::cout << text << "\n";
+        if (file)
+            file << text << "\r\n";
+    }
+};
 
 std::wstring upper(std::wstring value)
 {
     for (auto& ch : value)
         ch = static_cast<wchar_t>(std::towupper(ch));
     return value;
+}
+
+std::string narrow_ascii(std::wstring const& value)
+{
+    std::string result;
+    result.reserve(value.size());
+    for (auto ch : value)
+        result.push_back(ch >= 0 && ch < 128 ? static_cast<char>(ch) : '?');
+    return result;
 }
 
 std::wstring get_reg_property(HDEVINFO set, SP_DEVINFO_DATA& info, DWORD property)
@@ -119,106 +146,312 @@ std::wstring normalize_port(std::wstring port)
     return L"\\\\.\\" + port;
 }
 
-void print_command(std::array<std::uint8_t, 6> const& command)
+std::string hex_bytes(std::uint8_t const* data, std::size_t size)
 {
-    std::wcout << L"Command: ";
-    for (auto byte : command)
+    std::ostringstream out;
+    out << std::uppercase << std::hex << std::setfill('0');
+    for (std::size_t i = 0; i < size; ++i)
     {
-        std::wcout << std::uppercase << std::hex
-                   << std::setw(2) << std::setfill(L'0')
-                   << static_cast<unsigned>(byte);
+        if (i)
+            out << ' ';
+        out << std::setw(2) << static_cast<unsigned>(data[i]);
     }
-    std::wcout << std::dec << L"\n";
+    return out.str();
 }
 
-int send_command(std::wstring const& port,
-                 std::array<std::uint8_t, 6> const& command,
-                 bool turnOn)
+std::string hex_bytes(std::vector<std::uint8_t> const& data)
 {
-    auto path = normalize_port(port);
-    HANDLE handle = CreateFileW(
-        path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    return hex_bytes(data.data(), data.size());
+}
 
-    if (handle == INVALID_HANDLE_VALUE)
+std::string ascii_bytes(std::vector<std::uint8_t> const& data)
+{
+    std::string out;
+    out.reserve(data.size());
+    for (auto b : data)
     {
-        std::wcerr << L"Open failed for " << port
-                   << L" (Win32 error " << GetLastError() << L")\n";
-        return 20;
+        if (b == '\r') out += "\\r";
+        else if (b == '\n') out += "\\n";
+        else if (b >= 0x20 && b <= 0x7E) out.push_back(static_cast<char>(b));
+        else out.push_back('.');
+    }
+    return out;
+}
+
+bool configure_like_ctcdc(HANDLE handle, Logger& log)
+{
+    DWORD oldMask = 0;
+    if (!GetCommMask(handle, &oldMask))
+    {
+        log.line("GetCommMask failed: " + std::to_string(GetLastError()));
+        return false;
+    }
+    if (!SetCommMask(handle, EV_RXCHAR | EV_TXEMPTY))
+    {
+        log.line("SetCommMask(0x05) failed: " + std::to_string(GetLastError()));
+        return false;
+    }
+
+    DCB dcb{};
+    dcb.DCBlength = sizeof(dcb);
+    if (!GetCommState(handle, &dcb))
+    {
+        log.line("GetCommState failed: " + std::to_string(GetLastError()));
+        return false;
+    }
+
+    log.line("Original DCB: baud=" + std::to_string(dcb.BaudRate) +
+             " byteSize=" + std::to_string(dcb.ByteSize) +
+             " parity=" + std::to_string(dcb.Parity) +
+             " stopBits=" + std::to_string(dcb.StopBits));
+
+    dcb.BaudRate = CBR_115200;
+    dcb.ByteSize = 8;
+    dcb.Parity = NOPARITY;
+    dcb.StopBits = ONESTOPBIT;
+    dcb.fBinary = TRUE;
+    dcb.fParity = FALSE;
+    dcb.fOutxCtsFlow = FALSE;
+    dcb.fOutxDsrFlow = FALSE;
+    dcb.fDtrControl = DTR_CONTROL_DISABLE;
+    dcb.fDsrSensitivity = FALSE;
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
+    dcb.fRtsControl = RTS_CONTROL_DISABLE;
+    dcb.fAbortOnError = FALSE;
+
+    if (!SetCommState(handle, &dcb))
+    {
+        log.line("SetCommState(115200/8N1) failed: " + std::to_string(GetLastError()));
+        return false;
     }
 
     COMMTIMEOUTS timeouts{};
-    timeouts.ReadIntervalTimeout = MAXDWORD;
-    timeouts.ReadTotalTimeoutConstant = 100;
-    timeouts.ReadTotalTimeoutMultiplier = 0;
-    timeouts.WriteTotalTimeoutConstant = 1000;
-    timeouts.WriteTotalTimeoutMultiplier = 0;
-    SetCommTimeouts(handle, &timeouts);
-
-    std::wcout << L"Port: " << port << L"\n";
-    print_command(command);
-
-    DWORD written = 0;
-    BOOL ok = WriteFile(
-        handle, command.data(), static_cast<DWORD>(command.size()),
-        &written, nullptr);
-
-    if (!ok)
+    if (!SetCommTimeouts(handle, &timeouts))
     {
-        DWORD error = GetLastError();
-        CloseHandle(handle);
-        std::wcerr << L"WriteFile failed (Win32 error " << error << L")\n";
-        return 30;
+        log.line("SetCommTimeouts(all zero) failed: " + std::to_string(GetLastError()));
+        return false;
     }
 
-    FlushFileBuffers(handle);
-    CloseHandle(handle);
-
-    if (written != command.size())
+    if (!PurgeComm(handle, PURGE_TXABORT | PURGE_RXABORT | PURGE_TXCLEAR | PURGE_RXCLEAR))
     {
-        std::wcerr << L"Short write: " << written << L" / "
-                   << command.size() << L" bytes\n";
-        return 31;
+        log.line("PurgeComm(0x0F) failed: " + std::to_string(GetLastError()));
+        return false;
     }
 
-    std::wcout << L"Wrote 6 raw bytes. Direct Mode "
-               << (turnOn ? L"ON" : L"OFF")
-               << L" command sent.\n";
-    return 0;
+    if (!EscapeCommFunction(handle, SETDTR))
+    {
+        log.line("EscapeCommFunction(SETDTR) failed: " + std::to_string(GetLastError()));
+        return false;
+    }
+
+    log.line("Applied CTCDC serial init: mask=0x05, 115200/8N1, zero timeouts, purge=0x0F, SETDTR.");
+    return true;
 }
-} // namespace
+
+template <std::size_t N>
+bool write_exact(HANDLE handle, std::array<std::uint8_t, N> const& data, Logger& log, char const* label)
+{
+    log.line(std::string("TX ") + label + " (" + std::to_string(N) + " bytes): " + hex_bytes(data.data(), N));
+    DWORD written = 0;
+    if (!WriteFile(handle, data.data(), static_cast<DWORD>(N), &written, nullptr))
+    {
+        log.line(std::string("WriteFile failed: ") + std::to_string(GetLastError()));
+        return false;
+    }
+    if (written != N)
+    {
+        log.line("Short write: " + std::to_string(written) + " / " + std::to_string(N));
+        return false;
+    }
+    FlushFileBuffers(handle);
+    return true;
+}
+
+std::vector<std::uint8_t> collect_available(HANDLE handle, DWORD totalWaitMs, DWORD quietMs, Logger& log)
+{
+    std::vector<std::uint8_t> result;
+    auto const start = std::chrono::steady_clock::now();
+    auto lastData = start;
+    bool receivedAny = false;
+
+    while (true)
+    {
+        DWORD errors = 0;
+        COMSTAT stat{};
+        if (!ClearCommError(handle, &errors, &stat))
+        {
+            log.line("ClearCommError failed: " + std::to_string(GetLastError()));
+            break;
+        }
+
+        if (stat.cbInQue)
+        {
+            std::vector<std::uint8_t> chunk(stat.cbInQue);
+            DWORD read = 0;
+            if (!ReadFile(handle, chunk.data(), stat.cbInQue, &read, nullptr))
+            {
+                log.line("ReadFile failed: " + std::to_string(GetLastError()));
+                break;
+            }
+            chunk.resize(read);
+            result.insert(result.end(), chunk.begin(), chunk.end());
+            receivedAny = true;
+            lastData = std::chrono::steady_clock::now();
+        }
+
+        auto const now = std::chrono::steady_clock::now();
+        auto const elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+        auto const quiet = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastData).count();
+        if (elapsed >= totalWaitMs || (receivedAny && quiet >= quietMs))
+            break;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    return result;
+}
+
+bool find_firmware_response(std::vector<std::uint8_t> const& data, std::uint16_t& version)
+{
+    for (std::size_t i = 0; i + 3 <= data.size(); ++i)
+    {
+        if (data[i] == 0x5A)
+        {
+            auto const len = static_cast<std::size_t>(data[i + 2]);
+            if (i + 3 + len > data.size())
+                continue;
+            if (data[i + 1] == 0x03 && len == 2)
+            {
+                version = static_cast<std::uint16_t>(data[i + 3] | (data[i + 4] << 8));
+                return true;
+            }
+        }
+        else if (data[i] == 0x5B && i + 4 <= data.size())
+        {
+            auto const len = static_cast<std::size_t>(data[i + 2] | (data[i + 3] << 8));
+            if (i + 4 + len > data.size())
+                continue;
+            if (data[i + 1] == 0x03 && len == 2)
+            {
+                version = static_cast<std::uint16_t>(data[i + 4] | (data[i + 5] << 8));
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool starts_with_ascii(std::vector<std::uint8_t> const& data, char const* text)
+{
+    auto const n = std::char_traits<char>::length(text);
+    return data.size() >= n && std::equal(text, text + n, data.begin());
+}
+}
 
 int wmain(int argc, wchar_t* argv[])
 {
-    if (argc < 2 || argc > 3)
+    Logger log;
+    log.line("Sound Blaster X4 CTCDC serial initialization probe");
+    log.line("Read/diagnostic only after harmless protocol queries; no Direct Mode change is sent.");
+
+    if (argc > 2)
     {
-        std::wcerr << L"Usage: x4-serial-poc.exe on|off [COMx]\n";
+        log.line("Usage: x4-serial-ctcdc-probe.exe [COMx]");
         return 2;
     }
 
-    std::wstring mode = upper(argv[1]);
-    bool turnOn = false;
-    if (mode == L"ON")
-        turnOn = true;
-    else if (mode != L"OFF")
-    {
-        std::wcerr << L"Usage: x4-serial-poc.exe on|off [COMx]\n";
-        return 2;
-    }
-
-    std::wstring port;
-    if (argc == 3)
-        port = argv[2];
-    else
-        port = find_x4_control_port();
-
+    std::wstring port = argc == 2 ? argv[1] : find_x4_control_port();
     if (port.empty())
     {
-        std::wcerr << L"Sound Blaster X4 control interface "
-                   << kTargetHardwareId << L" was not found.\n";
+        log.line("Sound Blaster X4 MI_01 serial interface was not found.");
         return 10;
     }
 
-    auto const& command = turnOn ? kDirectModeOn : kDirectModeOff;
-    return send_command(port, command, turnOn);
+    log.line("Port: " + narrow_ascii(port));
+    auto const path = normalize_port(port);
+    HANDLE handle = CreateFileW(
+        path.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE)
+    {
+        log.line("CreateFileW failed: " + std::to_string(GetLastError()));
+        return 20;
+    }
+
+    int result = 0;
+    if (!configure_like_ctcdc(handle, log))
+    {
+        result = 21;
+    }
+    else
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (!write_exact(handle, kFirmwareQuery, log, "firmware query"))
+        {
+            result = 30;
+        }
+        else
+        {
+            auto response = collect_available(handle, 1500, 120, log);
+            log.line("RX firmware stage bytes=" + std::to_string(response.size()));
+            if (!response.empty())
+            {
+                log.line("RX HEX: " + hex_bytes(response));
+                log.line("RX ASCII: " + ascii_bytes(response));
+            }
+
+            std::uint16_t firmware = 0;
+            if (find_firmware_response(response, firmware))
+            {
+                std::ostringstream text;
+                text << "VALID firmware response found: 0x"
+                     << std::uppercase << std::hex << std::setw(4) << std::setfill('0') << firmware;
+                log.line(text.str());
+                log.line("CTCDC raw protocol is already responsive after serial initialization; unlock is not required in this state.");
+            }
+            else
+            {
+                log.line("No valid 5A/5B command-0x03 firmware response. CTCDC would enter its unlock path here.");
+                PurgeComm(handle, PURGE_RXCLEAR | PURGE_TXCLEAR);
+                if (!write_exact(handle, kUnlockHello, log, "unlock hello"))
+                {
+                    result = 31;
+                }
+                else
+                {
+                    auto unlockResponse = collect_available(handle, 3500, 150, log);
+                    log.line("RX unlock stage bytes=" + std::to_string(unlockResponse.size()));
+                    if (!unlockResponse.empty())
+                    {
+                        log.line("RX HEX: " + hex_bytes(unlockResponse));
+                        log.line("RX ASCII: " + ascii_bytes(unlockResponse));
+                    }
+
+                    if (starts_with_ascii(unlockResponse, "whoareyou"))
+                    {
+                        log.line("Recognized CTCDC unlock challenge prefix 'whoareyou'.");
+                        log.line("Probe stops before generating/sending the cryptographic unlock reply.");
+                    }
+                    else if (starts_with_ascii(unlockResponse, "NotYet\r\n"))
+                    {
+                        log.line("Device replied NotYet; CTCDC normally retries after a delay.");
+                    }
+                    else if (starts_with_ascii(unlockResponse, "Unknown command\r\n"))
+                    {
+                        log.line("Device replied Unknown command.");
+                    }
+                    else
+                    {
+                        log.line("Unlock response was empty or not one of the known CTCDC prefixes.");
+                    }
+                }
+            }
+        }
+    }
+
+    EscapeCommFunction(handle, CLRDTR);
+    CloseHandle(handle);
+    log.line("Done. Upload x4-ctcdc-probe.txt for analysis.");
+    return result;
 }
