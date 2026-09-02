@@ -1,14 +1,20 @@
-name: Build X4 USB Serial PoC ARM64
+name: Build X4 CTCDC Serial Probe ARM64
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - poc/windows-arm64-usb-serial-ctcdc-init
+    paths:
+      - 'src/serial-poc/**'
+      - '.github/workflows/build-serial-poc-arm64.yml'
 
 permissions:
   contents: read
 
 jobs:
   build:
-    name: Windows ARM64 USB Serial PoC
+    name: Windows ARM64 CTCDC Serial Probe
     runs-on: windows-2022
     timeout-minutes: 15
 
@@ -29,9 +35,9 @@ jobs:
       - name: Verify ARM64 PE and package
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "build/serial-poc/Release/x4-serial-poc.exe"
+          $exe = Join-Path $PWD "build/serial-poc/Release/x4-serial-ctcdc-probe.exe"
           if (-not (Test-Path $exe)) {
-            throw "x4-serial-poc.exe was not produced"
+            throw "x4-serial-ctcdc-probe.exe was not produced"
           }
 
           $bytes = [System.IO.File]::ReadAllBytes($exe)
@@ -42,18 +48,18 @@ jobs:
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $exe dist/x4-serial-poc.exe
+          Copy-Item $exe dist/x4-serial-ctcdc-probe.exe
           Copy-Item src/serial-poc/README.md dist/README.md
-          Compress-Archive -Path dist/x4-serial-poc.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-USB-Serial-PoC-ARM64.zip -Force
+          Compress-Archive -Path dist/x4-serial-ctcdc-probe.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-CTCDC-Serial-Probe-ARM64.zip -Force
 
           "ARM64 PE verified: 0xAA64"
           "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
-          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-USB-Serial-PoC-ARM64.zip -Algorithm SHA256).Hash)"
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-CTCDC-Serial-Probe-ARM64.zip -Algorithm SHA256).Hash)"
 
-      - name: Upload PoC ZIP
+      - name: Upload probe ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: SoundBlaster-X4-USB-Serial-PoC-ARM64
-          path: dist/SoundBlaster-X4-USB-Serial-PoC-ARM64.zip
+          name: SoundBlaster-X4-CTCDC-Serial-Probe-ARM64
+          path: dist/SoundBlaster-X4-CTCDC-Serial-Probe-ARM64.zip
           if-no-files-found: error
           retention-days: 14
