@@ -2,12 +2,6 @@ name: Build X4 USB Descriptor Diagnostic ARM64
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - diag/windows-arm64-audio-topology
-    paths:
-      - 'src/usb-descriptor-diag/**'
-      - '.github/workflows/build-usb-descriptor-diag-arm64.yml'
 
 permissions:
   contents: read
