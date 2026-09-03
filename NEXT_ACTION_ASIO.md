@@ -109,19 +109,17 @@ Branch:
 
 Implementation HEAD:
 
-`d055c2cbe66090f48d6b02eecd04c6a7eef4fd7f`
+`46c22ef00f85f3668d6851844fa1558d250cedb8`
 
 B3A starts from the validated B2 source and adds only the host-facing callback layer.
 
-New ABI surface:
+The public ASIO SDK 2.3 interface header forces 4-byte packing for its API structures. B3A therefore uses `#pragma pack(push,4)` and ARM64 compile-time guards for:
 
-- concrete `ASIOBufferInfo`
-- concrete `ASIOCallbacks`
-- ARM64 compile-time layout guards:
-  - `sizeof(ASIOBufferInfo)=24`
-  - `alignof(ASIOBufferInfo)=8`
-  - `sizeof(ASIOCallbacks)=32`
-  - `alignof(ASIOCallbacks)=8`
+- `sizeof(ASIOBufferInfo)=24`
+- `alignof(ASIOBufferInfo)=4`
+- `offsetof(ASIOBufferInfo,buffers)=8`
+- `sizeof(ASIOCallbacks)=32`
+- `alignof(ASIOCallbacks)=4`
 
 `createBuffers()` now accepts exactly:
 
@@ -148,7 +146,7 @@ Critical isolation rule remains:
 - hardware-buffer writes during RUN remain zero
 - no callback thread is added yet; `start()` remains synchronous for this diagnostic stage
 
-B2 vs B3A diff confirms the hardware engine change is limited to the observer hook (`wavert_engine.cpp` +12/-2; header +6/-2) plus new B3A host-facing files and CMake target selection.
+B2 vs B3A diff confirms the hardware engine change is limited to the observer hook plus the new B3A host-facing files and CMake target selection.
 
 ## Immediate next action — build and run B3A idle smoke
 
@@ -166,7 +164,7 @@ Run idle first.
 Expected key result:
 
 ```text
-ABI sizeof(ASIOBufferInfo)=24 align=8 sizeof(ASIOCallbacks)=32 align=8
+ABI sizeof(ASIOBufferInfo)=24 align=4 sizeof(ASIOCallbacks)=32 align=4
 init=1
 B2 PRE-PIN GATE: C 0/1 G 0/1 busy=NO
 createBuffers=0
