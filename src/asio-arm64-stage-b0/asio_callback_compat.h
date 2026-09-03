@@ -5,10 +5,11 @@
 #include "asio_compat.h"
 
 // Minimal concrete ASIO callback/buffer ABI used by Stage B3A.
-// These complete the forward declarations in asio_compat.h without importing
-// or depending on Creative runtime components.
+// The ASIO SDK forces 4-byte packing for these public interface structures.
 
 struct ASIOTime;
+
+#pragma pack(push, 4)
 
 struct ASIOBufferInfo {
     ASIOBool isInput;
@@ -28,13 +29,15 @@ struct ASIOCallbacks {
     ASIOBufferSwitchTimeInfoProc bufferSwitchTimeInfo;
 };
 
+#pragma pack(pop)
+
 #if defined(_M_ARM64) && !defined(_M_ARM64EC)
 static_assert(sizeof(long) == 4, "Windows ASIO ABI requires 32-bit long");
 static_assert(sizeof(ASIOBufferInfo) == 24, "Unexpected ARM64 ASIOBufferInfo size");
-static_assert(alignof(ASIOBufferInfo) == 8, "Unexpected ARM64 ASIOBufferInfo alignment");
+static_assert(alignof(ASIOBufferInfo) == 4, "ASIO SDK requires 4-byte packed ASIOBufferInfo");
 static_assert(offsetof(ASIOBufferInfo, isInput) == 0, "Unexpected ASIOBufferInfo::isInput offset");
 static_assert(offsetof(ASIOBufferInfo, channelNum) == 4, "Unexpected ASIOBufferInfo::channelNum offset");
 static_assert(offsetof(ASIOBufferInfo, buffers) == 8, "Unexpected ASIOBufferInfo::buffers offset");
 static_assert(sizeof(ASIOCallbacks) == 32, "Unexpected ARM64 ASIOCallbacks size");
-static_assert(alignof(ASIOCallbacks) == 8, "Unexpected ARM64 ASIOCallbacks alignment");
+static_assert(alignof(ASIOCallbacks) == 4, "ASIO SDK requires 4-byte packed ASIOCallbacks");
 #endif
