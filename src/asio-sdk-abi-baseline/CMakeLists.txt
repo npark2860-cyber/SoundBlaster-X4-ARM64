@@ -9,7 +9,10 @@ if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
   message(FATAL_ERROR "This baseline requires a 64-bit target.")
 endif()
 
-add_executable(x4-asio-sdk-abi-baseline main.cpp)
+add_executable(x4-asio-sdk-abi-baseline
+  main.cpp
+  abi_guard.cpp
+)
 target_compile_features(x4-asio-sdk-abi-baseline PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-sdk-abi-baseline PRIVATE
   UNICODE
