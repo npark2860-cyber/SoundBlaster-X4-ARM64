@@ -13,8 +13,9 @@
 #include <cstdio>
 
 // Experiment-only interception for the single KsCreatePin call in main.cpp.
-// The real KsCreatePin declaration is visible before the macro below is defined.
-static inline NTSTATUS WINAPI X4GuardedKsCreatePin(
+// ks.h is included above, so this wrapper can call the real SDK API before
+// the macro alias at the end of this file becomes active.
+static inline DWORD WINAPI X4GuardedKsCreatePin(
     HANDLE filter_handle,
     PKSPIN_CONNECT connect,
     ACCESS_MASK desired_access,
@@ -23,7 +24,7 @@ static inline NTSTATUS WINAPI X4GuardedKsCreatePin(
     if (!connect) {
         std::printf("GLOBAL INSTANCE GATE: Connect=NULL; KsCreatePin SKIPPED\n");
         std::fflush(stdout);
-        return static_cast<NTSTATUS>(ERROR_INVALID_PARAMETER);
+        return ERROR_INVALID_PARAMETER;
     }
 
     KSP_PIN request{};
@@ -51,7 +52,7 @@ static inline NTSTATUS WINAPI X4GuardedKsCreatePin(
             connect->PinId,
             error);
         std::fflush(stdout);
-        return static_cast<NTSTATUS>(error ? error : ERROR_GEN_FAILURE);
+        return error ? error : ERROR_GEN_FAILURE;
     }
 
     const bool busy = instances.CurrentCount >= instances.PossibleCount;
@@ -67,7 +68,7 @@ static inline NTSTATUS WINAPI X4GuardedKsCreatePin(
         std::printf("GLOBAL INSTANCE GATE: BUSY -> KsCreatePin SKIPPED\n");
         std::fflush(stdout);
         SetLastError(ERROR_BUSY);
-        return static_cast<NTSTATUS>(ERROR_BUSY);
+        return ERROR_BUSY;
     }
 
     std::printf("GLOBAL INSTANCE GATE: FREE -> calling real KsCreatePin\n");
