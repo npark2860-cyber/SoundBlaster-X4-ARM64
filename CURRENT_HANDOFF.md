@@ -1,6 +1,6 @@
 # CURRENT HANDOFF — Sound Blaster X4 Windows ARM64
 
-Updated: 2026-09-03 KST
+Updated: 2026-09-04 KST
 
 ## Source of truth
 
@@ -8,23 +8,51 @@ Repository: `npark2860-cyber/SoundBlaster-X4-ARM64`
 
 Default branch: `main`
 
-At startup, verify actual GitHub branch heads and read in this order:
+Verified `main` before this handoff update:
+
+`25d86f488593c9d3b435c1973da0d001b6a059a8`
+
+Current ASIO SDK baseline source branch:
+
+`exp/windows-arm64-asio-sdk-abi-baseline`
+
+Verified branch HEAD before the latest runtime-only tests:
+
+`a02be3c7ffb4dc66c7eb903712a8b4301efe8ea7`
+
+At startup, verify actual GitHub branch heads again and read in this order:
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-3. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-4. `DEBUG_HISTORY_20260903_CTCDC_MAX_PAYLOAD_RUNTIME.md`
-5. `DEBUG_HISTORY_20260903_CTCDC_OPEN_SESSION_RUNTIME.md`
-6. `DEBUG_HISTORY_20260903_DIRECT_MODE_RUNTIME_SUCCESS.md`
-7. `NEXT_ACTION_CTCDC.md`
+2. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+3. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
+4. `DEBUG_HISTORY_20260903_ASIO_ENGINE_STAGE_A0_RUNTIME_SUCCESS.md`
+5. `DEBUG_HISTORY_20260903_ASIO_WAVERT_ACTIVE_RUNTIME_SUCCESS.md`
+6. `NEXT_ACTION_ASIO.md`
+7. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
+8. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
+9. `DEBUG_HISTORY_20260903_CTCDC_MAX_PAYLOAD_RUNTIME.md`
+10. `DEBUG_HISTORY_20260903_CTCDC_OPEN_SESSION_RUNTIME.md`
+11. `DEBUG_HISTORY_20260903_DIRECT_MODE_RUNTIME_SUCCESS.md`
+12. `NEXT_ACTION_CTCDC.md`
+
+For the SDK source implementation also read, from branch `exp/windows-arm64-asio-sdk-abi-baseline`:
+
+- `DEBUG_HISTORY_20260903_ASIO_SDK_ABI_BASELINE_IMPLEMENTED.md`
+- `README.md`
+- `src/asio-sdk-abi-baseline/`
 
 Do not reconstruct state from old chat context when GitHub is available.
 
 ## Project goal
 
-Build an independent native Windows ARM64 controller for the locally USB-connected Creative Sound Blaster X4 / SB1815 on Snapdragon Windows ARM64.
+Build independent native Windows ARM64 support for the locally USB-connected Creative Sound Blaster X4 / SB1815 on Snapdragon Windows ARM64.
 
-Do not reintroduce Bluetooth as the Windows transport. Android BLE was protocol-discovery evidence only.
+The project now has two separate native components:
+
+1. native ARM64 X4 controller over CTCDC/CDC for device controls such as Direct Mode;
+2. native ARM64 ASIO user-mode implementation over Microsoft KS/WaveRT.
+
+Creative binaries are reference material only. Final runtime architecture must not depend on or redistribute Creative x86/x64 binaries.
 
 Device:
 
@@ -33,9 +61,205 @@ Device:
 - model/package `SB1815`
 - USB VID/PID `041E:3278`
 
-## Current milestone — Direct Mode works on Windows
+---
 
-Protocol/transport discovery for Direct Mode is complete for the currently observed X4 runtime state.
+# ASIO — CURRENT PRIORITY
+
+## Highest-value finding
+
+The current ASIO blocker is no longer a generic ARM64 ABI problem.
+
+The same official-Windows-SDK native ARM64 baseline executable:
+
+`x4-asio-sdk-abi-baseline.exe`
+
+SHA-256:
+
+`8EB73A17D25BE4FCB005F1BCF4F7CEFAA830A8F5FD906C6E526DA2868626AAAC`
+
+passes cleanly when no other X4 playback stream is active, but green-screens the machine when a second real Windows playback stream is deliberately kept active on the X4 during the baseline run.
+
+Controlled runtime matrix:
+
+| Audiosrv | CTAudSvcService | Other X4 playback active | Result |
+|---|---|---|---|
+| OFF | OFF | no | PASS |
+| ON | OFF | no | PASS |
+| ON | ON | no | PASS |
+| ON | ON | yes | GREEN SCREEN |
+
+Therefore:
+
+- `Audiosrv` merely running is not sufficient to trigger the crash;
+- `CTAudSvcService` merely running is not sufficient to trigger the crash;
+- services ON/OFF are not the root differentiator;
+- the tested differentiator is **another active X4 render stream**.
+
+The active-playback reproducer must **not** be run again merely to reproduce the crash. The trigger has been demonstrated.
+
+See `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`.
+
+## Known-good SDK baseline
+
+With no competing active X4 playback stream, the SDK baseline hardware run is fully successful:
+
+- native ARM64 (`0xAA64`)
+- official Windows SDK structures
+- compile-time ABI guards
+- X4 `msft_wave` filter opens
+- Render Pin 1 opens at 48 kHz / stereo / 16-bit
+- `KSPROPERTY_RTAUDIO_BUFFER_WITH_NOTIFICATION` returns a 4096-byte cyclic buffer
+- `CallMemoryBarrier = 0` on the hardware-confirmed runs
+- notification event registration succeeds
+- `KSSTATE_ACQUIRE` succeeds
+- `KSSTATE_PAUSE` succeeds
+- `KSSTATE_RUN` succeeds
+- 20/20 notifications arrive
+- packet count advances `1..20`
+- presentation position advances monotonically
+- packet discontinuities = 0
+- position regressions = 0
+- `RUN -> PAUSE -> ACQUIRE -> STOP` succeeds
+- event unregister succeeds
+- pin/filter close is clean
+
+This is enough to exonerate a simple official-SDK ABI/layout failure and the basic single-stream WaveRT state sequence.
+
+## Prior native Stage A0 result
+
+The earlier freestanding native ARM64 Stage A0 also passes one equivalent lifecycle on hardware:
+
+- 48 kHz / stereo / 16-bit
+- Render Pin 1
+- 4096-byte buffer
+- NotificationCount 2
+- zero once before RUN
+- no RUN-time writes
+- 20 notifications
+- clean teardown
+
+This remains valid evidence.
+
+## Repeated crash fingerprint before coexistence isolation
+
+Four prior native variants produced the same kernel fingerprint:
+
+- Stage A
+- Stage A1 repeated lifecycle
+- Stage A1 delayed-reopen
+- SDK ABI baseline
+
+Common class:
+
+- `WDF_VIOLATION 0x10D`
+- Parameter 1 = `0x5`
+- wrong WDF object type/lifetime path
+- repeated `usbaudio2.sys` / WDF stack fingerprint
+
+See `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`.
+
+## Kernel stale-pipe mechanism already proven in prior dump
+
+For `090326-16234-01.dmp`, the crash path was:
+
+`WdfRequestSend`
+→ `usbaudio2!UAWdfUsbDataPipe::SendBufferToTarget`
+→ `SubmitQueuedBuffers`
+→ `UAWdfUsbIsoPipe::OnPipeRestart`
+→ recovery work item
+
+The failing handle:
+
+`0x31F67D2BDAB8`
+
+was a `WDFUSBPIPE` whose backing `FxUsbPipe` was already destroyed.
+
+The X4 WDFDEVICE itself remained alive.
+
+The victim `IsoStreamOut` contained:
+
+- EP01 Data OUT wrapper at `+0xE8`
+- EP83 Feedback IN wrapper at `+0x288`
+
+The EP83 wrapper cached the exact stale crash handle.
+
+The recovery worker does not refresh/recreate the cached pipe handle before resubmitting. This stale-handle recovery failure is proven for the prior dump.
+
+## Prior crash victim was a different render stream
+
+The prior crash-victim `IsoStreamOut` was decoded from live dump memory as:
+
+- `WAVE_FORMAT_EXTENSIBLE`
+- stereo
+- 3 bytes/sample
+- 24-bit
+- channel mask `0x3`
+- 96,000 Hz
+
+It was therefore **not** the SDK baseline's requested 48 kHz / 16-bit render stream.
+
+This is important because it matches the new controlled coexistence result: an already-existing render stream is the object seen failing in recovery while another KS/WaveRT render path is being created/used.
+
+## Strong current model
+
+Current evidence supports:
+
+existing active X4 render stream
+→ second KS/WaveRT render pin lifecycle begins
+→ shared USB streaming interface / pipe lifecycle changes
+→ existing EP01/EP83 WDFUSBPIPE objects become invalid
+→ existing stream receives failed completions
+→ `usbaudio2` recovery starts
+→ recovery reuses a stale cached WDFUSBPIPE
+→ `WDF_VIOLATION 0x10D / 5`
+
+Precision rule:
+
+- stale cached pipe recovery is proven in the prior dump;
+- paired EP01/EP83 lifecycle destruction is strongly supported by WDF IFR;
+- active concurrent X4 playback as the runtime trigger is hardware A/B confirmed;
+- the exact `WdfUsbInterfaceSelectSetting` caller/timing that destroys the victim pipes is **not yet directly proven**.
+
+Do not overclaim that final link.
+
+## USB alternate-setting facts
+
+Static `usbaudio2.sys` analysis established:
+
+- `IsoStream::SetAltSettingActive` calls `WdfUsbInterfaceSelectSetting`
+- `IsoStream::SetAltSettingInactive` selects setting index 0
+- `IsoStream::AcquireIsoStream` calls `SetAltSettingActive`
+- `IsoStreamOut::StopIsoStream` stops data pipes before selecting inactive setting
+- `InitMaxTransportDelays` deliberately performs active/measurement/inactive setting selection during stream creation
+
+WDF deletes previous pipe objects for an interface when selecting a new setting and creates new configured pipe objects for the selected setting. This is the strongest concrete mechanism candidate for the stale-pipe invalidation.
+
+The direct `!wdfkd.wdfusbinterface` view from the triage dump was degraded and must not be used to assert an exact selected alt setting.
+
+## Immediate ASIO next action
+
+Do not run another intentional crash reproducer.
+
+Next steps:
+
+1. preserve the newest dump from the controlled active-playback green-screen test;
+2. compare it against the prior `0x10D/5` / `usbaudio2!UAWdfUsbDataPipe::SendBufferToTarget` fingerprint;
+3. if the fingerprint matches, close the ABI-root-cause investigation;
+4. statically determine how the Creative x64 ASIO reference obtains render ownership/coexistence when Windows shared playback is active;
+5. design the smallest safe native ARM64 preflight/ownership experiment;
+6. only after coexistence is safe, resume ASIO COM Stage B/productization.
+
+Do not move to capture, 24-bit ASIO transport, multichannel buffers, or unrelated ASIO features before the coexistence gate is understood.
+
+See `NEXT_ACTION_ASIO.md`.
+
+---
+
+# CTCDC CONTROLLER — HARDWARE-CONFIRMED BASELINE
+
+## Direct Mode works on Windows
+
+The CTCDC protocol/transport discovery for Direct Mode is complete for the tested X4 state.
 
 Hardware-confirmed path:
 
@@ -53,11 +277,7 @@ Hardware-confirmed path:
 → `5A 39 03 00 05 01`
 → **physical X4 Direct Mode ON confirmed by the user**
 
-This proves that the reconstructed CTCDC session path plus the exact six-byte Direct Mode command is sufficient for real Windows control on the tested X4 state.
-
-No Direct Mode response bytes are claimed from the success run because its probe log was not uploaded with the physical confirmation.
-
-## Fixed Direct Mode frames
+Fixed Direct Mode frames:
 
 - OFF: `5A 39 03 00 05 00`
 - ON: `5A 39 03 00 05 01`
@@ -97,28 +317,7 @@ Descriptor facts:
 - no vendor-class `0xFF` interface
 - no UAC Extension Unit
 
-## Creative Windows control chain
-
-Managed trace:
-
-`DirectModeFeatureViewModel`
-→ `ToggleFeatureViewModel`
-→ `IToggleFeature`
-→ `Creative.Platform.Devices`
-→ `CDCConnection.RawSetValue()`
-→ `CDCConnection.Write()`
-→ `ICTCDC.ExecuteCommand(1001, ...)`
-
-`1001` = `CTCDCCMD_WritePassthroughData`.
-
-Native static analysis confirms command 1001 writes the supplied raw bytes without adding another MIDAS wrapper.
-
-Known COM identities:
-
-- CCTCDC CLSID `{66FC4CF0-56C8-4523-A92B-CE69FCD7556A}`
-- ICTCDC IID `{669E9C0E-AD66-48C3-8228-29A55C2E9977}`
-
-## Native CTCDC fast path — hardware confirmed
+## Native CTCDC fast path
 
 Serial setup:
 
@@ -138,87 +337,27 @@ Hardware RX:
 
 `5A 03 02 3B 00`
 
-Therefore the currently observed state follows the native `Open()` fast path and skips Unlock / `SW_MODE1`.
-
-Required firmware query:
-
-`5A 09 01 02`
-
-Hardware RX:
-
-`5A 09 12 02 10 31 2E 37 2E 32 35 30 33 32 34 2E 30 39 31 30 00`
-
-Observed firmware string:
+Observed firmware:
 
 `1.7.250324.0910`
 
-Buttons query:
-
-`5A 26 01 05`
-
-Hardware RX:
+Buttons query RX:
 
 `5A 26 06 05 00 01 00 1E 00`
 
-Do not assign undocumented meaning to the button payload without further evidence.
+Do not assign undocumented meaning to the button payload.
 
-## Unlock path — contingency only
+## CTCDC fallback unlock
 
-Exact supplied native reference binaries:
+The fallback native unlock algorithm has been recovered but is not needed while the fast-path maximum-payload query succeeds.
 
-`CTCDC.dll`
+Reference binaries remain reference-only and must not be committed or redistributed.
 
-- size `2,122,200`
-- SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
-- PE32/x86
+See the CTCDC debug-history documents for the exact AES-GCM fallback details.
 
-`CTIntrfu.dll`
+## Eliminated controller paths
 
-- size `109,656`
-- SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
-- PE32/x86
-
-The fallback unlock algorithm is fully recovered but is not required while the initial max-payload query succeeds.
-
-Fallback greeting:
-
-`whoareyou.MyApp8\r\n`
-
-Normal challenge:
-
-- `whoareyou`
-- seed4
-- challenge32
-
-Effective AES-256 key:
-
-`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
-
-Response:
-
-`"unlock" || random16 || ciphertext32 || tag16 || "\r\n"`
-
-Cipher:
-
-- AES-256-GCM
-- first 12 random bytes = nonce
-- no AAD observed
-- 16-byte tag
-
-Expected success:
-
-`unlock_OK\r\n`
-
-Then:
-
-`SW_MODE1\r\n`
-→ `5A 03 00`
-→ firmware query
-→ buttons query
-
-Do not force this path when fast-path readiness already succeeds.
-
-## Eliminated paths — do not repeat
+Do not repeat:
 
 - Windows BLE control
 - HID output/prefix guessing
@@ -228,19 +367,17 @@ Do not force this path when fast-path readiness already succeeds.
 - `6A` Direct Mode variants
 - guessed `5C` wrappers
 
-## Current next task
+## CTCDC next task
 
-The next phase is **productization**, not more protocol discovery.
+CTCDC protocol discovery is complete enough for narrow productization:
 
-Implement the first native Windows ARM64 controller with a deliberately narrow scope:
-
-1. X4 CDC device/COM discovery
+1. X4 CDC/COM discovery
 2. CTCDC-compatible serial open/init
 3. fast-path session validation
 4. Direct Mode ON
 5. Direct Mode OFF
 6. clean close/release
 
-Do not add unrelated Creative features in this first implementation step.
+Do not add unrelated Creative features in the first controller implementation step.
 
-See `NEXT_ACTION_CTCDC.md` for the exact scope.
+ASIO coexistence remains the project's current highest-priority blocker.
