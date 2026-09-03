@@ -4,84 +4,66 @@ Updated: 2026-09-03 KST
 
 ## Current status
 
-ASIO feasibility is no longer the primary uncertainty.
+ASIO feasibility itself is hardware-confirmed on the user's Windows ARM64 Sound Blaster X4:
 
-Hardware-confirmed on the user's Windows ARM64 Sound Blaster X4:
-
-- Microsoft USB Audio 2.0 `msft_wave` KS filter is accessible from user mode
-- Render Pin 1 can be created at 48 kHz / stereo / 16-bit PCM
-- `KSPROPERTY_RTAUDIO_BUFFER_WITH_NOTIFICATION` allocates a real cyclic buffer
-- requested 4096 bytes -> actual 4096 bytes
+- X4 `msft_wave` KS filter opens from user mode
+- Render Pin 1 opens at 48 kHz / stereo / 16-bit PCM
+- `KSPROPERTY_RTAUDIO_BUFFER_WITH_NOTIFICATION` returns a real 4096-byte cyclic buffer
 - notification event registration succeeds
-- `KSSTATE_ACQUIRE`, `PAUSE`, `RUN`, and `STOP` all succeed
-- 20/20 DMA notifications were received
-- `KSPROPERTY_RTAUDIO_PACKETCOUNT` advanced 1..20
-- `KSPROPERTY_RTAUDIO_PRESENTATION_POSITION` advanced during RUN
-- presentation position advanced by 512 frames per notification after startup
-- 512 frames at 48 kHz = 10.666666... ms
-- 4096-byte stereo 16-bit buffer = 1024 frames, so notification count 2 correctly produces 512-frame half-buffer cadence
+- `KSSTATE_ACQUIRE`, `PAUSE`, `RUN`, and `STOP` succeed
+- 20/20 DMA notifications were observed
+- packet count and presentation position advance correctly
+- presentation position advances by 512 frames per notification after startup
 
-Hardware-mapped `POSITIONREGISTER` and `CLOCKREGISTER` returned `ERROR_NOT_SUPPORTED`; do not require them. The working packet/presentation-position fallback is sufficient for the next prototype.
+See `DEBUG_HISTORY_20260903_ASIO_WAVERT_ACTIVE_RUNTIME_SUCCESS.md`.
+
+## Critical new issue — native Stage A quarantined
+
+The first independent native ARM64 Stage A executable caused Windows to reboot with a reported `WDF_VIOLATION` / `0x10D` bug check on first hardware execution.
+
+**Do not rerun that executable.**
 
 See:
 
-`DEBUG_HISTORY_20260903_ASIO_WAVERT_ACTIVE_RUNTIME_SUCCESS.md`
+`DEBUG_HISTORY_20260903_ASIO_STAGE_A_WDF_VIOLATION.md`
 
-## Immediate implementation target
+The prior managed PowerShell/C# active probe remains valid hardware evidence because it completed the same core WaveRT stream lifecycle successfully.
 
-Build the first independent ASIO engine prototype around the proven WaveRT render path.
+The native implementation changed too many variables at once:
 
-Deliberately narrow Stage A scope:
+1. managed P/Invoke -> freestanding native ARM64 ABI
+2. one stream lifecycle -> three reopen/run/close cycles
+3. 20 notifications -> 64 per run
+4. silence initialized once -> half-buffer writes on every notification
+5. repeated packet/presentation queries across the longer run
+6. rapid unregister/close/reopen lifecycle
 
-1. Sound Blaster X4 `msft_wave` filter discovery
-2. Render Pin 1 only
-3. 48 kHz only
-4. stereo only
-5. 16-bit PCM only
-6. 4096-byte WaveRT cyclic buffer
-7. notification count = 2
-8. expose two logical host buffers of 512 frames each
-9. callback/buffer index flips once per DMA notification
-10. sample position derived from presentation position, with packet count as continuity evidence
-11. clean STOP/unregister/close
+Do not continue to ASIO COM Stage B until this native crash is isolated.
 
-Do not add capture, multichannel, 24-bit, 96/192 kHz, dynamic buffer sizes, or sample-rate switching in Stage A.
+## Immediate next action
 
-## Stage A success criteria
+Forensics first, no new active RUN binary yet:
 
-The prototype must prove:
+1. inspect any surviving `x4-asio-engine-stage-a.txt`
+2. inspect the Windows minidump if available
+3. obtain bug-check parameters and faulting module with `!analyze -v`
+4. compare native structure layouts and DeviceIoControl buffer semantics against the exact successful C# probe
+5. rebuild a native parity probe that changes **one variable only**
 
-- stable callback alternation 0/1/0/1...
-- no missed packet-count increments during a sustained run
-- monotonically advancing sample position
-- clean start/stop across repeated runs
-- no dependency on Creative user-mode DLLs
-- no dependency on Creative x64 ASIO DLLs
+The next hardware run must match the successful managed probe as closely as possible:
 
-## After Stage A
+- one open/run/stop/close lifecycle
+- 48 kHz / stereo / 16-bit / Render Pin 1
+- 4096-byte buffer / notification count 2
+- 20 notifications only
+- fill silence once before RUN
+- no per-notification writes initially
+- no repeated reopen
 
-Stage B:
-
-- implement the ASIO COM interface/registration around the proven render engine
-- expose it to a real ASIO host
-- verify host buffer callbacks and sample position
-
-Stage C:
-
-- add Capture Pin 4
-- verify capture notification cadence independently
-- then full-duplex synchronization
-
-Stage D:
-
-- add 24-bit format handling
-- 96/192 kHz where exposed
-- multichannel render where exposed
-- configurable ASIO buffer sizes
-- sample-rate switching and reset notifications
+Only after that exact native parity run succeeds should logical 0/1 callback buffer writes be introduced.
 
 ## Architectural rule
 
-Final product code must be independent native ARM64 code.
+Final product code remains independent native ARM64 code.
 
 Creative binaries are reference material only. Do not load or redistribute `CtU2As64.dll`, `CTCDC.dll`, `CTIntrfu.dll`, or Creative application assemblies as runtime dependencies.
