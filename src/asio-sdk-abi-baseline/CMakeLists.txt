@@ -13,6 +13,13 @@ add_executable(x4-asio-sdk-abi-baseline
   main.cpp
   abi_guard.cpp
 )
+
+# Experiment branch only: force-include the read-only GLOBALCINSTANCES gate
+# into main.cpp so the original baseline lifecycle remains otherwise unchanged.
+set_source_files_properties(main.cpp PROPERTIES
+  COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/global_instance_gate.h"
+)
+
 target_compile_features(x4-asio-sdk-abi-baseline PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-sdk-abi-baseline PRIVATE
   UNICODE
