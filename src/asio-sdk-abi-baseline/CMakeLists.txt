@@ -14,8 +14,6 @@ target_compile_features(x4-asio-sdk-abi-baseline PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-sdk-abi-baseline PRIVATE
   UNICODE
   _UNICODE
-  WIN32_LEAN_AND_MEAN
-  NOMINMAX
   _WIN32_WINNT=0x0A00
   WINVER=0x0A00
 )
