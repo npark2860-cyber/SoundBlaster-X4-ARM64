@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <new>
 
 #include "asio_compat.h"
@@ -16,6 +17,7 @@ namespace {
 
 volatile LONG g_object_count = 0;
 volatile LONG g_lock_count = 0;
+HMODULE g_module = nullptr;
 
 bool guid_equal(REFGUID a, REFGUID b) {
     return !!InlineIsEqualGUID(a, b);
@@ -27,7 +29,7 @@ public:
         InterlockedIncrement(&g_object_count);
     }
 
-    ~X4AsioDriver() override {
+    ~X4AsioDriver() {
         InterlockedDecrement(&g_object_count);
     }
 
@@ -59,13 +61,13 @@ public:
 
     ASIOBool init(void* sysHandle) override {
         (void)sysHandle;
-        std::strcpy_s(last_error_, "Stage B0 COM shell: streaming engine not connected yet");
+        strcpy_s(last_error_, "Stage B0 COM shell: streaming engine not connected yet");
         return ASIOTrue;
     }
 
     void getDriverName(char* name) override {
         if (!name) return;
-        std::strcpy_s(name, 32, kX4AsioDriverName);
+        strcpy_s(name, 32, kX4AsioDriverName);
     }
 
     long getDriverVersion() override {
@@ -74,7 +76,7 @@ public:
 
     void getErrorMessage(char* string) override {
         if (!string) return;
-        std::strcpy_s(string, 124, last_error_);
+        strcpy_s(string, 124, last_error_);
     }
 
     ASIOError start() override {
@@ -182,7 +184,7 @@ public:
         InterlockedIncrement(&g_object_count);
     }
 
-    ~X4ClassFactory() override {
+    ~X4ClassFactory() {
         InterlockedDecrement(&g_object_count);
     }
 
@@ -265,8 +267,10 @@ HRESULT set_registry_string(HKEY root, const wchar_t* path, const wchar_t* name,
 }
 
 HRESULT register_server() {
+    if (!g_module) return E_UNEXPECTED;
+
     wchar_t module_path[MAX_PATH]{};
-    if (!GetModuleFileNameW(reinterpret_cast<HMODULE>(&__ImageBase), module_path, MAX_PATH)) {
+    if (!GetModuleFileNameW(g_module, module_path, MAX_PATH)) {
         return HRESULT_FROM_WIN32(GetLastError());
     }
 
@@ -311,8 +315,6 @@ HRESULT unregister_server() {
 
 } // namespace
 
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
 extern "C" HRESULT __stdcall DllCanUnloadNow() {
     return (g_object_count == 0 && g_lock_count == 0) ? S_OK : S_FALSE;
 }
@@ -341,6 +343,7 @@ extern "C" HRESULT __stdcall DllUnregisterServer() {
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved) {
     (void)reserved;
     if (reason == DLL_PROCESS_ATTACH) {
+        g_module = instance;
         DisableThreadLibraryCalls(instance);
     }
     return TRUE;
