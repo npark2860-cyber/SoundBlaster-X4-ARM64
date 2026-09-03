@@ -1,0 +1,6 @@
+LIBRARY "x4-asio-arm64"
+EXPORTS
+    DllCanUnloadNow
+    DllGetClassObject
+    DllRegisterServer
+    DllUnregisterServer
