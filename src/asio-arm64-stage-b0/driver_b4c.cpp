@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <mmsystem.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -32,22 +33,13 @@ bool guid_equal(REFGUID a, REFGUID b) {
     return !!InlineIsEqualGUID(a, b);
 }
 
-ASIOTimeStamp qpc_to_nanoseconds(LARGE_INTEGER counter, LARGE_INTEGER frequency) {
-    if (frequency.QuadPart <= 0) return 0;
-    const LONGLONG whole_seconds = counter.QuadPart / frequency.QuadPart;
-    const LONGLONG remainder = counter.QuadPart % frequency.QuadPart;
-    const LONGLONG remainder_ns = static_cast<LONGLONG>(
-        (static_cast<long double>(remainder) * 1000000000.0L) /
-        static_cast<long double>(frequency.QuadPart));
-    return static_cast<ASIOTimeStamp>(whole_seconds * 1000000000LL + remainder_ns);
+ASIOTimeStamp asio_system_time_ns() {
+    return static_cast<ASIOTimeStamp>(timeGetTime()) * 1000000LL;
 }
 
 class X4AsioDriver final : public IASIO {
 public:
-    X4AsioDriver() {
-        QueryPerformanceFrequency(&qpc_frequency_);
-        InterlockedIncrement(&g_object_count);
-    }
+    X4AsioDriver() { InterlockedIncrement(&g_object_count); }
 
     ~X4AsioDriver() {
         force_join_worker();
@@ -479,11 +471,9 @@ private:
         self->last_callback_index_ = buffer_index;
         const LONG callback_ordinal = InterlockedIncrement(&self->callback_count_);
 
-        LARGE_INTEGER qpc{};
-        QueryPerformanceCounter(&qpc);
         const ASIOSamples block_position =
             static_cast<ASIOSamples>(callback_ordinal - 1) * kHostBufferFrames;
-        const ASIOTimeStamp block_timestamp = qpc_to_nanoseconds(qpc, self->qpc_frequency_);
+        const ASIOTimeStamp block_timestamp = asio_system_time_ns();
         InterlockedExchange64(&self->sample_position_, block_position);
         InterlockedExchange64(&self->sample_timestamp_ns_, block_timestamp);
 
@@ -583,7 +573,6 @@ private:
     volatile LONG dma_copy_errors_ = 0;
     volatile LONGLONG sample_position_ = 0;
     volatile LONGLONG sample_timestamp_ns_ = 0;
-    LARGE_INTEGER qpc_frequency_{};
     long last_callback_index_ = -1;
     char last_error_[124] = "Stage B4C ASIO2 time-info not initialized";
 };
