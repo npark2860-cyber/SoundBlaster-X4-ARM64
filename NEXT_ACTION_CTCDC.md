@@ -1,21 +1,20 @@
-# NEXT ACTION — CTCDC Unlock / Session Reconstruction
+# NEXT ACTION — CTCDC Hardware Challenge / Session Validation
 
 Updated: 2026-09-03 KST
 
-## Objective
+## Current status
 
-Recover the exact native Windows CTCDC session required before X4 accepts passthrough MIDAS commands, then reproduce Direct Mode ON/OFF on Windows ARM64 without relying on Creative's x64-only stack.
+Native static analysis **Stage A is complete** for the exact supplied binaries, and the existing safe ARM64 probe audit/fix **Stage B is complete**.
 
-Known Direct Mode frame is already confirmed:
+Do not repeat the native trace unless the input DLL hashes change.
 
-- OFF `5A 39 03 00 05 00`
-- ON  `5A 39 03 00 05 01`
+Full binary trace:
 
-Do not spend time rediscovering these bytes.
+`DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
-## Required startup files
+Current next step is **Stage C — controlled hardware observation**.
 
-Primary native inputs supplied by user:
+## Fixed binary identities
 
 ### CTCDC.dll
 
@@ -27,170 +26,162 @@ Primary native inputs supplied by user:
 - size `109,656`
 - SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
 
-These binaries are not in GitHub. If the new chat cannot access them, ask the user to upload these exact two files again.
+Both supplied binaries are PE32/x86. They are reference inputs for reconstructing an independent ARM64 implementation; they are not ARM64-loadable components.
 
-Useful managed reference binaries if needed:
+## Binary-confirmed session state machine
 
-- `Creative.Platform.Devices.dll`
-  - SHA-256 `2d77172fb6ae850b6d03a09830892c8c3a0ab79e10dda28f40a76b3fadc47e93`
-- `Creative.App.UI.Framework.dll`
-  - SHA-256 `f903fc410528a314fc890df53766d19dad11efb0b5074017f3e71de4d905f8d8`
+Relevant path is now recovered as:
 
-## Existing experimental branch
+`CTCreateInstanceEx`
+→ `DllGetClassObject`
+→ `IClassFactory::CreateInstance`
+→ `ICTCDC::Initialize`
+→ `ICTCDC::Open`
+→ serial init
+→ `5A 03 00` GetMaximumPayloadSize
+→ if unavailable, unlock greeting
+→ challenge parse
+→ AES-256-GCM unlock reply
+→ `unlock_OK\r\n`
+→ `SW_MODE1\r\n`
+→ `5A 03 00` GetMaximumPayloadSize retry
+→ `5A 09 01 02` GetFirmwareVersionString
+→ `5A 26 01 05` QueryButtonsAvailable
+→ normal session
+→ `ICTCDC.ExecuteCommand(1001, ...)`
+→ raw MIDAS bytes
+
+Known Direct Mode raw frames remain:
+
+- OFF `5A 39 03 00 05 00`
+- ON `5A 39 03 00 05 01`
+
+`ExecuteCommand(1001)` adds no extra MIDAS wrapper.
+
+## Important correction
+
+`5A 03 00` is **not** a firmware-version query.
+
+It is:
+
+`CTCDCCMD_GetMaximumPayloadSize`
+
+A valid command-`0x03`, 2-byte response yields the maximum payload size and is used by CTCDC as a session-readiness test.
+
+## Recovered unlock algorithm
+
+Normal challenge layout:
+
+- bytes `0..8`: ASCII `whoareyou`
+- bytes `9..12`: seed4
+- bytes `13..44`: challenge32
+
+Effective AES-256 key:
+
+`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
+
+Normal unlock reply is exactly 72 bytes:
+
+`"unlock" || random16 || ciphertext32 || tag16 || "\r\n"`
+
+- cipher: AES-256-GCM
+- first 12 bytes of `random16`: GCM nonce
+- plaintext input: challenge32
+- AAD: none observed
+- tag: 16 bytes
+- expected success response: `unlock_OK\r\n`
+
+Do not implement a different or guessed challenge transform.
+
+## Existing safe probe
+
+Branch:
 
 `poc/windows-arm64-usb-serial-ctcdc-init`
 
-HEAD at handoff:
+Current HEAD after Stage B corrections:
 
-`d44a33936639cc76c935b59c0502133eaa5bcf2d`
+`2125308b869fae21cef3d074de1e7a7a0e250b27`
 
-Successful ARM64 build run:
+Workflow:
 
-`33692026928`
+`Build X4 CTCDC Serial Probe ARM64`
 
-Final workflow state is manual-only (`workflow_dispatch`).
+Trigger remains manual-only:
 
-Do not merge this branch into `main` until the hardware behavior is understood.
+`workflow_dispatch`
 
-## Execution order
+The Stage B correction changed only probe source/documentation:
 
-### Stage A — Native static analysis first
+- `5A 03 00` is now parsed/logged as maximum payload size
+- unrelated DCB flags are preserved instead of forcibly cleared
+- `GetCommTimeouts` is read before zeroing the timeout structure
+- no unlock reply, `SW_MODE1`, or Direct Mode command was added
 
-Trace `CTIntrfu.dll`:
+The workflow itself was not changed.
 
-1. `CTCreateInstanceEx`
-2. module/class resolution for CTCDC
-3. construction of `ICTCDC`
-4. exact lifetime / initialize / open / close sequence
-5. arguments passed into CTCDC and any hidden configuration values
+## Stage C — run now
 
-Trace `CTCDC.dll`:
+Manually run the branch workflow and execute the resulting ARM64 probe against the locally USB-connected X4.
 
-1. `ICTCDC::Initialize`
-2. `ICTCDC::Open`
-3. serial-port discovery/open logic
-4. DCB/event-mask/timeouts/purge/DTR configuration
-5. first `5A 03 00` query
-6. command-`0x03` response parser
-7. condition that enters unlock mode
-8. literal `whoareyou.MyApp8\r\n` path
-9. challenge parser
-10. cryptographic/key transform for the reply
-11. exact bytes/string written as unlock response
-12. success/failure parser
-13. SetSoftwareMode path
-14. any additional post-unlock initialization
-15. `ExecuteCommand(1001)` implementation
-16. how raw passthrough responses are framed/read
-
-Record function offsets/RVAs and pseudocode in a new debug history document. Do not only record strings.
-
-### Stage B — Verify the existing CTCDC probe against the binary
-
-The branch currently reproduces:
-
-- event mask `0x05`
-- 115200 baud
-- 8N1
-- zero timeouts
-- `PurgeComm(0x0F)`
-- `SETDTR`
-- first query `5A 03 00`
-- unlock greeting `whoareyou.MyApp8\r\n`
-
-Compare each of these against the exact supplied `CTCDC.dll` before extending the probe.
-
-If static analysis contradicts the branch, fix the branch based on binary evidence rather than preserving the old probe behavior.
-
-### Stage C — Controlled hardware observation
-
-Only after Stage A/B is coherent:
-
-Run the existing safe probe and capture:
+Capture:
 
 `x4-ctcdc-probe.txt`
 
 Required observations:
 
-- whether `5A 03 00` receives a valid response
-- exact response bytes
-- whether unlock greeting is reached
-- exact challenge/response text or bytes returned by X4
+1. exact RX bytes after `5A 03 00`
+2. whether a valid maximum-payload response is already returned
+3. if not, whether `whoareyou.MyApp8\r\n` is sent
+4. exact RX bytes from the unlock stage
+5. if the reply begins with `whoareyou`, preserve the full seed/challenge bytes exactly
 
-Do not send a guessed unlock reply.
+The current probe intentionally stops before generating/sending the cryptographic unlock reply.
 
-### Stage D — Implement exact unlock/session response
+## Stage D — only after Stage C capture
 
-After the algorithm is recovered statically and the device challenge is known:
+Using the hardware challenge plus the already recovered binary algorithm:
 
-- implement only the exact Creative-observed response algorithm
-- add verbose hex logging for every TX/RX
-- stop immediately on unexpected response
-- do not auto-loop destructive or unknown commands
+1. implement the exact 72-byte AES-256-GCM unlock response
+2. log every TX/RX in hex
+3. require exact `unlock_OK\r\n`
+4. send exact `SW_MODE1\r\n`
+5. validate its expected success response
+6. re-run `5A 03 00`
+7. validate `5A 09 01 02`
+8. stop before Direct Mode
 
-Validate unlock/software mode first without Direct Mode.
+Do not send guessed replies or unknown commands.
 
-### Stage E — Direct Mode passthrough
+## Stage E — Direct Mode passthrough
 
-When CTCDC session setup is confirmed:
+Only after Stage D proves the session state:
 
-Send exactly one known command at a time:
+- ON: `5A 39 03 00 05 01`
+- OFF: `5A 39 03 00 05 00`
 
-ON:
+Send one command at a time and require physical X4 state confirmation.
 
-`5A 39 03 00 05 01`
+A successful Windows write is not sufficient validation.
 
-OFF:
-
-`5A 39 03 00 05 00`
-
-Require physical X4 state confirmation from the user.
-
-A successful OS-level write alone is not validation.
-
-## Important known native/API clues
-
-Managed layer calls:
-
-`ICTCDC.ExecuteCommand(1001, ...)`
-
-where 1001 is `CTCDCCMD_WritePassthroughData`.
-
-Observed/previously identified COM-style IDs:
-
-- CCTCDC CLSID `{66FC4CF0-56C8-4523-A92B-CE69FCD7556A}`
-- ICTCDC IID `{669E9C0E-AD66-48C3-8228-29A55C2E9977}`
-
-CTCDC error enumeration included indications such as:
-
-- Failed Unlock
-- Failed SetSoftwareMode
-
-Treat these as roadmap clues, not a substitute for tracing the actual control flow.
-
-## Do not regress to eliminated paths
+## Do not regress
 
 Do not restart:
 
-- Windows BLE implementation
+- Windows BLE control
 - HID output experiments
-- raw Direct Mode COM write without session setup
+- naked Direct Mode COM writes without session setup
 - UAC Extension Unit search
-- vendor-interface search
-- `6A` / guessed `5C` Direct Mode frame variants
+- vendor-class interface search
+- `6A` Direct Mode variants
+- guessed `5C` wrappers
 
 ## Documentation discipline
 
-For every new confirmed step, write a dated GitHub document before moving on.
+For every new hardware-confirmed step, add a dated GitHub debug-history document before extending the probe further.
 
-Suggested next document name:
-
-`DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-
-That document should distinguish:
+Keep these categories distinct:
 
 - binary-confirmed fact
 - inference
 - hardware-confirmed runtime result
-
-Never promote an inference to confirmed state until there is static or runtime evidence.
