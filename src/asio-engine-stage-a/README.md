@@ -1,8 +1,12 @@
 # X4 ASIO Engine Stage A
 
+> **QUARANTINED — DO NOT RUN THE CURRENT STAGE A EXECUTABLE.**
+>
+> First hardware execution of this native ARM64 Stage A build caused a Windows `WDF_VIOLATION` bug check / reboot on 2026-09-03. The preceding PowerShell/C# WaveRT active probe completed successfully on the same X4. Treat this native implementation as unsafe until the exact ABI/lifecycle difference is isolated. See `DEBUG_HISTORY_20260903_ASIO_STAGE_A_WDF_VIOLATION.md` on `main`.
+
 Independent native Windows ARM64 WaveRT render-engine prototype for Sound Blaster X4.
 
-## Fixed scope
+## Original fixed scope
 
 - X4 `msft_wave` filter discovery
 - Render Pin 1 only
@@ -20,16 +24,10 @@ Independent native Windows ARM64 WaveRT render-engine prototype for Sound Blaste
 
 No capture, 24-bit, 96/192 kHz, multichannel, dynamic buffer size, sample-rate switching, ASIO COM registration, or Creative runtime DLLs are included in Stage A.
 
-## Expected runtime log
+## Why this build is quarantined
 
-`x4-asio-engine-stage-a.txt`
+The implementation changed too many variables at once relative to the previously hardware-proven C# active probe: native ABI, three reopen cycles, longer runs, per-notification buffer writes, and repeated teardown/reopen.
 
-PASS requires:
+The next native build must return to exact parity with the successful C# probe and change one variable at a time.
 
-- 192 callbacks total
-- packet discontinuities = 0
-- logical-buffer alternation errors = 0
-- sample-position regressions = 0
-- all 3 full resource lifecycles complete
-
-The logical-buffer callback currently fills the completed half-buffer with silence. Stage B will replace that test callback with the actual ASIO host-facing buffer callback layer.
+Do not use the original Stage A runtime ZIP again.
