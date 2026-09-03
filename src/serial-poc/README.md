@@ -2,11 +2,31 @@
 
 Read/diagnostic probe for the X4's `USB\\VID_041E&PID_3278&MI_01` CDC serial interface.
 
-This version exists because reverse engineering of Creative's exact `CTCDC.dll` showed that the previous raw serial PoC did **not** reproduce Creative's serial/session initialization.
+## Current hardware-confirmed state
 
-## CTCDC initialization reproduced
+The physical X4 has replied to:
 
-The probe applies:
+```text
+5A 03 00
+```
+
+with:
+
+```text
+5A 03 02 3B 00
+```
+
+Static analysis of the exact `CTCDC.dll` identifies command `0x03` as `CTCDCCMD_GetMaximumPayloadSize`, so the observed maximum payload size is:
+
+```text
+0x003B = 59 bytes
+```
+
+Because this query succeeds, the recovered `ICTCDC::Open()` path skips Unlock and `SW_MODE1` in this runtime state.
+
+## What this build tests
+
+The probe reproduces CTCDC serial initialization:
 
 - communication mask `0x05` (`EV_RXCHAR | EV_TXEMPTY`)
 - `115200` baud
@@ -18,23 +38,14 @@ The probe applies:
 - `PurgeComm(0x0F)`
 - `EscapeCommFunction(SETDTR)`
 
-It then sends CTCDC's first session-readiness query:
+It then follows only the already-responsive CTCDC `Open()` branch:
 
-```text
-5A 03 00
-```
+1. `5A 03 00` — `GetMaximumPayloadSize`
+2. `5A 09 01 02` — `GetFirmwareVersionString`
+3. `5A 26 01 05` — `QueryButtonsAvailable`
+4. stop
 
-Static analysis confirms this is `CTCDCCMD_GetMaximumPayloadSize`. A valid command-`0x03`, 2-byte response returns the maximum payload size; it is **not** a firmware-version query.
-
-If no valid maximum-payload response is received, the tool follows CTCDC only one harmless step further and sends its unlock greeting:
-
-```text
-whoareyou.MyApp8\r\n
-```
-
-It records the response but deliberately stops before generating or sending the cryptographic unlock reply.
-
-Static analysis has recovered the later CTCDC path (`AES-256-GCM` unlock response, `SW_MODE1`, post-unlock maximum-payload retry, firmware-version query, and passthrough), but this probe remains intentionally limited until the first real X4 challenge is captured.
+If the first maximum-payload query unexpectedly fails, this build stops. It does not attempt unlock.
 
 ## Run
 
@@ -48,7 +59,7 @@ The X4 COM port is auto-detected. An explicit port can be supplied:
 .\\x4-serial-ctcdc-probe.exe COM3
 ```
 
-Output is written to both the console and:
+Output is written to:
 
 ```text
 x4-ctcdc-probe.txt
@@ -58,4 +69,11 @@ Upload that text file for analysis.
 
 ## Safety / scope
 
-This probe does **not** send an unlock reply, `SW_MODE1`, or Direct Mode ON/OFF. It performs only the CTCDC serial initialization, the maximum-payload readiness query, and when needed the first unlock greeting observed in Creative's own CTCDC implementation.
+This build does **not** send:
+
+- an unlock response
+- `SW_MODE1`
+- Direct Mode ON/OFF
+- any other state-changing command
+
+It only validates the remaining read/query portion of CTCDC's successful `Open()` path before passthrough is tested.
