@@ -21,7 +21,7 @@ target_compile_definitions(x4-asio-arm64 PRIVATE
   WINVER=0x0A00
 )
 target_compile_options(x4-asio-arm64 PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
-target_link_libraries(x4-asio-arm64 PRIVATE advapi32.lib)
+target_link_libraries(x4-asio-arm64 PRIVATE advapi32.lib uuid.lib)
 set_property(TARGET x4-asio-arm64 PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -36,6 +36,7 @@ target_compile_definitions(x4-asio-stage-b0-smoke PRIVATE
   WINVER=0x0A00
 )
 target_compile_options(x4-asio-stage-b0-smoke PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+target_link_libraries(x4-asio-stage-b0-smoke PRIVATE uuid.lib)
 set_property(TARGET x4-asio-stage-b0-smoke PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
