@@ -16,7 +16,8 @@ B4C adds only the ASIO 2.x time-info callback contract:
 - `ASIOFuture(kAsioCanTimeInfo) -> ASE_SUCCESS`
 - driver calls host `asioMessage(kAsioSupportsTimeInfo)` during `createBuffers()`
 - if host returns 1 and supplies `bufferSwitchTimeInfo`, streaming callbacks use `bufferSwitchTimeInfo()` instead of legacy `bufferSwitch()`
-- each `ASIOTime` carries the same B4B logical block-start position and QPC-derived nanosecond timestamp
+- each `ASIOTime` carries the same B4B logical block-start position
+- Windows ASIO `systemTime` / `getSamplePosition()` timestamp is derived from `timeGetTime()` and expressed in nanoseconds, matching the ASIO specification
 - sample rate is 48000 and speed is 1.0
 - required time-info valid flags are set
 - time-code data remains invalid/unused
