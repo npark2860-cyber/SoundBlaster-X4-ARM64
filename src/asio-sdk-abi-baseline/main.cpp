@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <winioctl.h>
 #include <setupapi.h>
 #include <ks.h>
 #include <mmreg.h>
@@ -237,7 +238,7 @@ PinCreateRequest make_pin_request() {
 
     request.Format.DataFormat.FormatSize = sizeof(KSDATAFORMAT_WAVEFORMATEXTENSIBLE);
     request.Format.DataFormat.Flags = 0;
-    request.Format.DataFormat.SampleSize = 0; // Preserve the hardware-confirmed A0 request.
+    request.Format.DataFormat.SampleSize = 0;
     request.Format.DataFormat.Reserved = 0;
     request.Format.DataFormat.MajorFormat = KSDATAFORMAT_TYPE_AUDIO;
     request.Format.DataFormat.SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
@@ -335,7 +336,7 @@ struct RunStats {
 
 bool run_single_a0_lifecycle(RunStats* stats) {
     wchar_t path[1024]{};
-    if (!find_x4_wave_path(path, _countof(path))) {
+    if (!find_x4_wave_path(path, sizeof(path) / sizeof(path[0]))) {
         logf("X4 msft_wave filter not found");
         return false;
     }
