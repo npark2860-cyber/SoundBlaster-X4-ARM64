@@ -1,6 +1,7 @@
 #pragma once
 
 #include <windows.h>
+#include <unknwn.h>
 
 using ASIOBool = long;
 using ASIOError = long;
