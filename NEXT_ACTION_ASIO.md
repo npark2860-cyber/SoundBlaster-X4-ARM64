@@ -1,154 +1,214 @@
-# NEXT ACTION — Native ARM64 ASIO engine
+# NEXT ACTION — Native ARM64 ASIO
 
 Updated: 2026-09-04 KST
 
 ## Current status
 
-Native ARM64 ASIO feasibility is hardware-confirmed on the Sound Blaster X4.
+Native ARM64 ASIO feasibility and the first render coexistence safety gate are now hardware-confirmed on the Sound Blaster X4.
 
-Known-good one-stream baseline:
+Known-good fixed render baseline:
 
-- X4 `msft_wave` KS filter opens from native ARM64 user mode
-- Render Pin 1 opens at 48 kHz / stereo / 16-bit PCM
-- `KSPROPERTY_RTAUDIO_BUFFER_WITH_NOTIFICATION` returns a 4096-byte cyclic buffer
-- notification event registration succeeds
-- `KSSTATE_ACQUIRE`, `PAUSE`, `RUN`, and `STOP` succeed
-- 20/20 DMA notifications are observed
-- packet count advances `1..20`
-- presentation position advances monotonically
+- native Windows ARM64
+- X4 `msft_wave`
+- Render Pin 1
+- 48 kHz
+- stereo
+- 16-bit PCM / `WAVE_FORMAT_EXTENSIBLE`
+- 4096-byte WaveRT notification buffer
+- notification count = 2
+- 20/20 notifications
 - packet discontinuities = 0
 - presentation-position regressions = 0
-- event unregister and handle close complete cleanly
+- clean unregister / STOP / close
 
-The current official-SDK executable is native ARM64 and uses Microsoft SDK ABI declarations/guards directly.
-
-Executable SHA-256:
-
-`8EB73A17D25BE4FCB005F1BCF4F7CEFAA830A8F5FD906C6E526DA2868626AAAC`
-
-Source branch:
+SDK baseline branch:
 
 `exp/windows-arm64-asio-sdk-abi-baseline`
 
-Verified pre-runtime-test branch HEAD:
+Baseline HEAD:
 
 `a02be3c7ffb4dc66c7eb903712a8b4301efe8ea7`
 
-## Blocker isolated — concurrent active X4 playback
+## Generic ABI investigation — closed
 
-The previous kernel crashes are no longer treated as a generic ARM64 SDK ABI failure.
+The newest controlled active-playback dump matched the already-established kernel fingerprint:
 
-Controlled runtime matrix using the exact same unmodified SDK baseline:
+- `WDF_VIOLATION 0x10D`
+- Parameter 1 = `5`
+- `usbaudio2` recovery path
+- stale/destroyed WDF USB pipe usage
 
-| Audiosrv | CTAudSvcService | Other X4 playback active | Result |
-|---|---|---|---|
-| OFF | OFF | no | PASS |
-| ON | OFF | no | PASS |
-| ON | ON | no | PASS |
-| ON | ON | yes | GREEN SCREEN |
+Therefore a generic native ARM64 ABI / Windows SDK layout defect is no longer the primary explanation.
 
-Therefore service state alone is not sufficient.
+Do not intentionally reproduce that green-screen condition again.
 
-The hardware-confirmed differentiator in the current matrix is an **already-active X4 playback stream** while the native KS/WaveRT baseline opens/starts another render stream.
+## Render coexistence root-cause differential — hardware confirmed
+
+Static analysis of reference-only Creative `CtU2As64.DLL` recovered a concrete pre-`KsCreatePin` ownership policy:
+
+1. query `KSPROPERTY_PIN_CINSTANCES`
+2. query `KSPROPERTY_PIN_GLOBALCINSTANCES`
+3. treat `CurrentCount >= PossibleCount` as busy
+4. when configured, attempt Creative's `TakeExclusiveControl` endpoint arbitration
+5. re-query instance availability
+6. do not proceed through the observed `KsCreatePin` path while capacity remains exhausted
+
+On the user's X4 Render Pin 1:
+
+### Idle
+
+- `CINSTANCES`: `0 / 1`
+- `GLOBALCINSTANCES`: `0 / 1`
+- result: FREE
+
+### Normal Windows X4 playback active
+
+- `CINSTANCES`: `0 / 1`
+- `GLOBALCINSTANCES`: `1 / 1`
+- result: BUSY
+
+Therefore Windows shared playback consumes the single global Render Pin 1 instance even though the local instance count remains zero.
+
+## Native ARM64 GLOBALCINSTANCES gate — hardware confirmed
+
+Experiment branch:
+
+`exp/windows-arm64-asio-global-instance-gate`
+
+Validated HEAD:
+
+`362d58372b58640ac666dd59f17e532b092c05d3`
+
+The only runtime safety change is a fail-closed `KSPROPERTY_PIN_GLOBALCINSTANCES` query immediately before the real `KsCreatePin`.
+
+### Idle result
+
+```text
+GLOBAL INSTANCE GATE: PinId=1 PossibleCount=1 CurrentCount=0 busy=NO
+GLOBAL INSTANCE GATE: FREE -> calling real KsCreatePin
+```
+
+The unchanged fixed WaveRT lifecycle then completed 20/20 and PASSed.
+
+### Active Windows playback result
+
+```text
+GLOBAL INSTANCE GATE: PinId=1 PossibleCount=1 CurrentCount=1 busy=YES
+GLOBAL INSTANCE GATE: BUSY -> KsCreatePin SKIPPED
+KsCreatePin failed status=0x000000AA
+```
+
+The process exited normally with no green screen.
+
+`0xAA` is intentional `ERROR_BUSY` from the experiment wrapper.
+
+This establishes the first hardware-confirmed safe coexistence behavior for the native ARM64 render path:
+
+**when global render capacity is exhausted, return a clean busy/coexistence failure and do not instantiate the KS pin.**
+
+Do not add Creative-style WASAPI exclusive arbitration yet. The fail-closed gate is sufficient for the first product path.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+- `DEBUG_HISTORY_20260904_ASIO_CREATIVE_EXCLUSIVE_PREFLIGHT_STATIC.md`
+- `DEBUG_HISTORY_20260904_ASIO_GLOBAL_INSTANCE_GATE_ACTIVE_SUCCESS.md`
 
-## Prior kernel mechanism
+## Stage B0 — native ARM64 ASIO COM shell implemented
 
-The previously analyzed SDK-baseline dump `090326-16234-01.dmp` showed:
+ASIO COM productization may now resume.
 
-- `WDF_VIOLATION 0x10D`
-- Parameter 1 = `0x5`
-- failure in `usbaudio2!UAWdfUsbDataPipe::SendBufferToTarget`
-- failing object was a stale/destroyed `WDFUSBPIPE`
-- the owning WDFDEVICE remained alive
+Branch:
 
-The crash-victim `IsoStreamOut` was decoded as:
+`exp/windows-arm64-asio-com-stage-b0`
 
-- 96 kHz
-- stereo
-- 24-bit
-- `WAVE_FORMAT_EXTENSIBLE`
+Implementation HEAD:
 
-It was not the probe's 48 kHz / 16-bit render stream.
+`d766bc70cbb3d9abfc9ac265ee577b5185354103`
 
-The victim had cached EP01 Data OUT and EP83 Feedback IN WDFUSBPIPE handles. WDF IFR showed the two targets being canceled/closed/disposed as a pair, after which recovery attempted to reuse the stale EP83 handle and bugchecked.
+Independent project CLSID:
 
-This makes a shared-interface render coexistence/lifetime collision the strongest current model.
+`{0AA6D99C-4AF6-45EF-9CCA-10AC9239B7D4}`
 
-## What is now ruled out as a sufficient explanation
+Creative's CLSID is not reused.
 
-Do not spend the next cycle re-testing these as primary causes:
+Stage B0 provides:
 
-- `Audiosrv` merely running
-- `CTAudSvcService` merely running
-- simple official-SDK ABI/layout mismatch
-- hand-declared ARM64 structure layout alone
-- repeated reopen alone
-- per-notification DMA writes alone
-- the basic one-stream 48k/16 WaveRT lifecycle
+- native ARM64 in-process COM DLL
+- `IClassFactory`
+- ASIO-compatible vtable derived from `IUnknown`
+- `DllCanUnloadNow`
+- `DllGetClassObject`
+- `DllRegisterServer`
+- `DllUnregisterServer`
+- fixed metadata/capabilities only:
+  - 0 inputs
+  - 2 outputs
+  - 48 kHz
+  - 512-frame fixed buffer
 
-Those were useful earlier isolation steps but no longer match the controlled runtime matrix.
+Stage B0 deliberately does **not** connect the WaveRT engine:
 
-## Immediate next action
+- `start()` returns `ASE_InvalidMode`
+- `createBuffers()` returns `ASE_InvalidMode`
+- no X4 filter open
+- no `KsCreatePin`
+- no WaveRT buffer
+- no hardware I/O
 
-### 1. Do not intentionally reproduce the green-screen again
+See:
 
-The active-playback trigger has already been demonstrated. Re-running it adds risk without adding meaningful evidence.
+`DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B0_IMPLEMENTED.md`
 
-### 2. Preserve and analyze the newest controlled-test dump
+## Immediate next action — Stage B0 registry-free COM smoke
 
-If the latest green-screen dump is available, compare it directly against the established fingerprint:
+Run the manual GitHub Actions workflow:
 
-- bugcheck `0x10D / p1=5`
-- `usbaudio2!UAWdfUsbDataPipe::SendBufferToTarget`
-- failing WDF object type/lifetime
-- EP01/EP83 wrapper state
-- recovery work-item path
+`Build ASIO COM Stage B0 ARM64`
 
-If it matches, mark the generic ABI-root-cause investigation closed.
+It builds and packages:
 
-### 3. Recover Creative's coexistence/ownership strategy statically
+- `x4-asio-arm64.dll`
+- `x4-asio-stage-b0-smoke.exe`
 
-Use `CtU2As64.DLL` as reference-only evidence.
+First test only the registry-free smoke executable with both files in the same directory:
 
-Determine what the x64 Creative ASIO implementation does before it opens/starts its WaveRT render path when Windows shared playback may already be active.
+```bat
+x4-asio-stage-b0-smoke.exe
+```
 
-Focus only on evidence for:
+Expected final line:
 
-- endpoint/session ownership or preflight checks
-- whether a Windows/Creative playback stream is stopped, suspended, drained, or otherwise coordinated
-- pin/format selection strategy
-- sampling-frequency ownership
-- alternate-setting coordination
-- state/event/thread synchronization around stream startup and teardown
+```text
+STAGE B0 COM SMOKE RESULT: PASS
+```
 
-Do not infer behavior merely from API names; require static call-path evidence.
+This test is safe with respect to the X4 because it performs no hardware I/O.
 
-### 4. Design one safe coexistence preflight experiment
+### Do not do yet
 
-The next ARM64 hardware experiment must avoid deliberately driving the known crash condition.
+Until the registry-free COM smoke passes:
 
-The goal is to detect or safely arbitrate an already-active X4 render stream **before** opening/starting the conflicting KS/WaveRT path.
+- do not call `DllRegisterServer`
+- do not use `regsvr32`
+- do not test in a real DAW
+- do not connect WaveRT to the COM object
 
-Do not implement broad ASIO functionality in this step.
+## After Stage B0 smoke passes — Stage B1
 
-### 5. Resume ASIO COM Stage B only after coexistence is safe
+Integrate the already-proven fixed render engine behind the ASIO object one variable at a time.
 
-After ownership/preflight is hardware-confirmed, continue toward:
+First B1 scope:
 
-native ARM64 DAW
-→ native ARM64 ASIO COM DLL
-→ SetupAPI / `KsCreatePin`
-→ WaveRT
-→ Microsoft UAC2
-→ X4
+1. keep 48 kHz / stereo / 16-bit / Render Pin 1 only
+2. keep fixed 4096-byte WaveRT buffer / two 512-frame halves
+3. query `GLOBALCINSTANCES` immediately before every render `KsCreatePin`
+4. if busy, return a clean ASIO device-busy/coexistence failure without pin creation
+5. connect only the minimum `init` / `createBuffers` / `start` / `stop` lifecycle necessary for one render stream
+6. preserve known-good WaveRT state ordering and cleanup
 
-No custom kernel driver is currently justified.
+Do not add Creative `TakeExclusiveControl` arbitration in this stage.
 
-## Scope freeze until coexistence gate passes
+## Scope still frozen
 
 Do not add or test yet:
 
@@ -156,12 +216,19 @@ Do not add or test yet:
 - 24-bit ASIO transport
 - multichannel ASIO buffers
 - sample-rate expansion
-- runtime buffer-writing/callback engine changes
+- dynamic buffer-size expansion
 - repeated reopen stress
-- ASIO COM registration/productization beyond what is needed for the ownership experiment
+- Creative runtime dependencies
+- custom kernel driver
 
 ## Architectural rule
 
-Final product code remains independent native ARM64 code.
+Final architecture remains:
 
-Creative binaries are reference material only. Do not load or redistribute `CtU2As64.dll`, `CTCDC.dll`, `CTIntrfu.dll`, or Creative application assemblies as final runtime dependencies.
+native ARM64 DAW
+→ independent native ARM64 ASIO COM DLL
+→ SetupAPI / `KsCreatePin` / WaveRT
+→ Microsoft `usbaudio2.sys`
+→ Sound Blaster X4
+
+Creative binaries remain reference-only and must not be loaded or redistributed as final runtime dependencies.
