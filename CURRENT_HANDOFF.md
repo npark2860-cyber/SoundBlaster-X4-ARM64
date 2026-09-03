@@ -8,18 +8,20 @@ Repository: `npark2860-cyber/SoundBlaster-X4-ARM64`
 
 Default branch: `main`
 
-Main HEAD immediately before this handoff documentation commit:
+Main HEAD immediately before this handoff update commit:
 
-`6d5780dcd38191aec85a0cea52fe0be9c34e7cfc`
+`36145b921ce6ff47f6414fb326c03a3b4fb8b994`
 
-Do **not** reconstruct state from old chat context. At startup, verify the actual current GitHub `main` HEAD and the branch heads below, then read:
+Do **not** reconstruct state from old chat context. At startup, verify actual GitHub `main` and branch heads, then read in this order:
 
 1. `CURRENT_HANDOFF.md`
 2. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-3. `NEXT_ACTION_CTCDC.md`
-4. Existing `PROTOCOL.md`, `RUNTIME_VALIDATION.md`, and `apk-analysis/*` only as supporting history.
+3. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
+4. `NEXT_ACTION_CTCDC.md`
 
-This handoff intentionally records documentation only. Experimental code branches remain unmerged.
+`PROTOCOL.md`, `RUNTIME_VALIDATION.md`, and `apk-analysis/*` are supporting history only.
+
+Experimental code branches remain unmerged.
 
 ---
 
@@ -30,10 +32,10 @@ Build a native Windows ARM64 controller for Creative Sound Blaster X4 / SB1815 o
 Critical architecture rule:
 
 - Windows target is the **locally USB-connected X4**.
-- Android/mobile BLE is useful for protocol discovery only.
-- Do **not** reintroduce Bluetooth as the Windows transport.
+- Android/mobile BLE was useful for protocol discovery only.
+- Do not reintroduce Bluetooth as the Windows transport.
 
-Device identity:
+Device:
 
 - Product: `Sound Blaster X4`
 - Codename: `Accent2`
@@ -42,290 +44,329 @@ Device identity:
 
 ---
 
-## Direct Mode command — confirmed
+## Current stage
 
-Android hardware validation and Windows `Creative.Platform.Devices.dll` independently converge on the same raw MIDAS command.
+Native `CTCDC.dll` / `CTIntrfu.dll` static analysis is now **complete for the current input hashes**.
 
-Direct Mode OFF:
+Stage A — native static analysis: **complete**
 
-`5A 39 03 00 05 00`
+Stage B — audit/fix existing safe ARM64 CTCDC probe against native binary: **complete**
 
-Direct Mode ON:
+Stage C — controlled hardware challenge capture: **next**
 
-`5A 39 03 00 05 01`
+Do not repeat Stage A/B unless the binaries or branch state change.
 
-Frame:
+Full static trace:
 
-`5A | command=39 | payload_length=03 | payload=00 05 value`
+`DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
-Windows static trace:
+Execution instructions:
 
-- `CDCRawCommand.FeatureControl = 0x39`
-- Direct Mode feature mask = `0x20`
-- bit position = `5`
-- SET operation byte = `0`
-- value = `0/1`
-- `RawCmd5A<T>` supplies header `0x5A`
-
-Do **not** revive obsolete Direct Mode candidates using `6A` or guessed `5C` frames.
+`NEXT_ACTION_CTCDC.md`
 
 ---
 
-## Android/mobile transport — confirmed but Windows-irrelevant
+## Direct Mode command — confirmed
 
-X4 BLE name: `Control for SB1815`
+The raw MIDAS command is fixed and already independently confirmed by Android hardware validation and Windows managed-code analysis.
 
-GATT:
+OFF:
 
-- Service: `b7860001-11b8-b681-6343-5a6c2286633f`
-- Write: `b7860002-11b8-b681-6343-5a6c2286633f`
-- Read/Notify: `b7860003-11b8-b681-6343-5a6c2286633f`
-- CCCD: `00002902-0000-1000-8000-00805f9b34fb`
+`5A 39 03 00 05 00`
 
-Android Debug Protocol raw sender physically confirmed the Direct Mode frames above.
+ON:
 
-This BLE path must not be used as the Windows solution.
+`5A 39 03 00 05 01`
+
+Windows construction:
+
+- command `0x39` = `FeatureControl`
+- SET operation = `0`
+- Direct Mode feature bit position = `5` from mask `0x20`
+- value = `0/1`
+- frame header = `0x5A`
+
+Do not revive obsolete `6A` or guessed `5C` Direct Mode variants.
 
 ---
 
 ## Windows USB topology — hardware confirmed
 
-Composite device:
+Composite parent:
 
 `USB\VID_041E&PID_3278`
 
-Raw configuration descriptor:
+Relevant interfaces:
 
-- total length: `1143`
-- 7 USB interfaces
-- no vendor-class (`0xFF`) interface
-- no UAC Extension Unit
-
-Interfaces:
-
-- IF0: HID / Consumer Control
-- IF1: CDC ACM control
-- IF2: CDC data
+- MI_00 / IF0: HID Consumer Control
+- MI_01 / IF1+IF2: CDC ACM + data, exposed as `USB Serial Device (COM3)` / `usbser`
   - Bulk OUT `0x03`
   - Bulk IN `0x82`
-- IF3: USB Audio 2.0 AudioControl
-- IF4–IF6: USB Audio 2.0 AudioStreaming
+- MI_03 / IF3: USB Audio 2.0 AudioControl
+- IF4–IF6: USB AudioStreaming
 
-Windows PnP observations:
+Raw descriptor facts:
 
-- MI_00 -> HID (`HidUsb`)
-- MI_01 -> `USB Serial Device (COM3)` (`usbser`)
-- MI_03 -> Sound Blaster X4 USB Audio 2.0 (`usbaudio2` on the current ARM64 machine)
+- total configuration length `1143`
+- seven interfaces
+- no vendor-class `0xFF` interface
+- no UAC Extension Unit
 
-DeviceTopology exposed standard volume/mute/mixer/ADC/DAC/SuperMix nodes only; no useful Creative proprietary node was exposed there.
+DeviceTopology exposed only normal Windows audio nodes; no useful Creative proprietary control node emerged there.
 
 ---
 
-## Negative runtime results — do not repeat blindly
+## Eliminated runtime paths
 
-### Raw serial Direct Mode
+### Naked COM Direct Mode
 
-Branch: `poc/windows-arm64-usb-serial-direct-mode`
+Branch:
 
-Current branch HEAD recorded at handoff:
+`poc/windows-arm64-usb-serial-direct-mode`
+
+HEAD:
 
 `b8d763de343e87c0af101d0b7495a40ba2ddd703`
 
-The tool opened COM3 and successfully wrote the 6-byte Direct Mode frames, but the physical X4 showed **no reaction**.
+Writing the exact six Direct Mode bytes to COM3 succeeded at the OS level but produced **no physical X4 reaction**.
 
-Conclusion: raw COM write without Creative's CDC initialization/unlock/software-mode sequence is insufficient.
+Conclusion: the command bytes are correct, but CTCDC session initialization is required.
 
 ### HID Output Direct Mode
 
-Branch: `poc/windows-arm64-hid-output-direct-mode`
+Branch:
+
+`poc/windows-arm64-hid-output-direct-mode`
 
 HEAD:
 
 `5824c203f75ddf2ab0e0c5663f53ba674df68552`
 
-Both `HidD_SetOutputReport` and `WriteFile` accepted 65-byte reports containing the known Direct Mode frame. The physical X4 showed **no reaction**.
+Both tested HID write methods were accepted by Windows but produced **no physical X4 reaction**.
 
-Conclusion: MI_00 HID is not the direct Windows control transport in that form.
-
-Do not continue blind HID prefix/report guessing.
+Do not continue HID prefix/report guessing.
 
 ---
 
-## SB1815 online package / Creative Windows driver package
+## Creative Windows control call chain
 
-User recovered the Creative online SB1815 package.
-
-Package marker:
-
-- PackageId: `SB1815`
-- PackageName: `SB1815`
-- package Version: `1.0.10.00`
-
-Inside it, `DrvUpdate.exe` is:
-
-- `Creative Sound Blaster (CT)USB Audio Drivers Setup`
-- version `3.06.00.00`
-- Inno Setup package
-
-Offline extraction recovered 67 payload files and all 67 matched their recorded SHA-1 checksums.
-
-Important recovered files include:
-
-- `ctusbaud.inf`
-- `CTUSBfilt64.sys`
-- `CtUSBa64.sys`
-- `CTUSBWrap64.dll`
-- `CTUSBAPO64.dll`
-- `CTUSBDGFX64.dll`
-- `CTUSBppld64.dll`
-- `CTIOM64.exe`
-
-Important architecture correction from `ctusbaud.inf`:
-
-For X4/SB1815 `USB\VID_041E&PID_3278&MI_03`, Creative does not simply replace the whole USB audio stack with `CtUSBa64.sys`; the package uses Microsoft USB Audio 2.0 and attaches `CTUSBfilt64` as a Creative upper filter for the relevant X4 path.
-
-Do not simplify the architecture to “X4 always uses CtUSBa64.sys as the main driver.”
-
----
-
-## Windows Creative App Direct Mode call chain — confirmed static trace
-
-`Creative.App.Features.DirectMode.dll` is mostly UI/state coordination. It delegates the actual toggle through `IToggleFeature`.
-
-Relevant managed dependencies supplied by user:
-
-- `Creative.Platform.Devices.dll`
-  - SHA-256 `2d77172fb6ae850b6d03a09830892c8c3a0ab79e10dda28f40a76b3fadc47e93`
-- `Creative.App.UI.Framework.dll`
-  - SHA-256 `f903fc410528a314fc890df53766d19dad11efb0b5074017f3e71de4d905f8d8`
-
-Managed call chain:
+Managed static trace:
 
 `DirectModeFeatureViewModel`
--> `ToggleFeatureViewModel`
--> `IToggleFeature`
--> `Creative.Platform.Devices`
--> `CDCConnection.RawSetValue()`
--> `CDCConnection.Write()`
--> CTCDC passthrough command
+→ `ToggleFeatureViewModel`
+→ `IToggleFeature`
+→ `Creative.Platform.Devices`
+→ `CDCConnection.RawSetValue()`
+→ `CDCConnection.Write()`
+→ `ICTCDC.ExecuteCommand(1001, ...)`
 
-The Platform Devices code constructs the same physical Direct Mode frame already confirmed on Android.
+`1001` = `CTCDCCMD_WritePassthroughData`.
 
-Low-level write path:
+The native implementation adds **no additional MIDAS wrapper**. After a valid CTCDC session is established, command 1001 writes the caller's raw bytes to the CDC path.
 
-- CTCDC command enum: `CTCDCCMD_WritePassthroughData = 1001`
-- payload structure contains pointer to raw bytes + `dwSize`
-- the raw payload for Direct Mode is the 6-byte `5A 39 03 00 05 value` frame
-- managed code calls `ICTCDC.ExecuteCommand(1001, ...)`
+Known COM identities, now confirmed in the native binary:
 
-`CTIntrfu.dll` is used to obtain/load the CTCDC implementation (`CTCreateInstanceEx` path observed in prior static trace).
-
-Known COM-style identifiers from prior trace:
-
-- CCTCDC CLSID: `{66FC4CF0-56C8-4523-A92B-CE69FCD7556A}`
-- ICTCDC IID: `{669E9C0E-AD66-48C3-8228-29A55C2E9977}`
-
-Do not treat these identifiers alone as proof of the transport mechanics; continue tracing the supplied native binaries.
+- CCTCDC CLSID `{66FC4CF0-56C8-4523-A92B-CE69FCD7556A}`
+- ICTCDC IID `{669E9C0E-AD66-48C3-8228-29A55C2E9977}`
 
 ---
 
-## CTCDC.dll / CTIntrfu.dll — newest inputs
+## Exact native inputs
 
-The user has now supplied the two native binaries needed for the next phase:
+`CTCDC.dll`
 
-- `CTCDC.dll`
-  - size: `2,122,200` bytes
-  - SHA-256: `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
-- `CTIntrfu.dll`
-  - size: `109,656` bytes
-  - SHA-256: `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
+- size `2,122,200`
+- SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
+- PE32 / x86
 
-These proprietary binaries are **not committed to GitHub**. Only their identity/hashes are recorded here.
+`CTIntrfu.dll`
 
-If a new chat cannot access the prior conversation files, ask the user to re-upload exactly these two DLLs rather than searching for replacements.
+- size `109,656`
+- SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
+- PE32 / x86
+
+These proprietary binaries are not committed to GitHub. If unavailable in a future chat, re-upload these exact binaries rather than substituting other versions.
 
 ---
 
-## CTCDC preliminary reverse-engineering state
+## Native CTCDC state machine — binary confirmed
 
-A preliminary static trace already established enough CTCDC behavior to build a controlled probe.
+Factory/load path:
 
-Experimental branch:
+`CTCreateInstanceEx`
+→ Creative component resolution
+→ `LoadLibraryExW`
+→ `DllGetClassObject`
+→ `IClassFactory::CreateInstance`
+→ `ICTCDC`
 
-`poc/windows-arm64-usb-serial-ctcdc-init`
+Relevant ICTCDC methods:
 
-Branch HEAD at handoff:
+- `Initialize` VA `0x10003430`
+- `Open` VA `0x100035F0`
+- `ExecuteCommand` VA `0x10003BE0`
+- `Close` VA `0x10003DF0`
+- `Shutdown` VA `0x10003EE0`
 
-`d44a33936639cc76c935b59c0502133eaa5bcf2d`
-
-Workflow is currently manual-only (`workflow_dispatch`).
-
-Successful ARM64 CI build:
-
-- workflow: `Build X4 CTCDC Serial Probe ARM64`
-- run ID: `33692026928`
-- result: success
-
-Probe source reproduces CTCDC's observed serial initialization:
+Serial setup performed by CTCDC:
 
 - event mask `0x05` = `EV_RXCHAR | EV_TXEMPTY`
-- baud `115200`
-- 8 data bits
-- no parity
-- one stop bit
-- zero COM timeouts
+- 115200 baud
+- 8N1
+- DTR/RTS control-mode bits disabled while unrelated DCB flags are preserved
+- all COM timeouts zeroed
 - `PurgeComm(0x0F)`
 - `SETDTR`
 
-Then it sends CTCDC's first normal protocol probe:
+### Important semantic correction
 
-`5A 03 00`
+`5A 03 00` is **not** a firmware query.
 
-If no valid command-`0x03` reply is received, it sends only the first observed unlock greeting:
+It is `CTCDCCMD_GetMaximumPayloadSize`.
+
+A valid command-`0x03` response with a two-byte payload returns Maximum Payload Size. CTCDC uses this as an initial session-readiness test.
+
+If it succeeds immediately, `Open()` skips unlock and `SetSwMode1`.
+
+If it fails, CTCDC enters the unlock path.
+
+---
+
+## Unlock path — binary confirmed
+
+Initial TX:
 
 `whoareyou.MyApp8\r\n`
 
-The probe intentionally stops before the cryptographic unlock reply and does not send Direct Mode.
+Normal challenge layout:
 
-**No hardware runtime result for this CTCDC probe is recorded in GitHub at this handoff.** Do not invent one.
+- bytes `0..8`: `whoareyou`
+- bytes `9..12`: 4-byte seed
+- bytes `13..44`: 32-byte challenge
+
+Effective AES-256 key:
+
+`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
+
+Cipher:
+
+- AES-256-GCM
+- 32-byte challenge encrypted
+- no AAD observed
+- 16-byte generated random field is transmitted
+- first 12 random bytes are the GCM nonce
+- 16-byte GCM tag
+
+Exact normal response layout, total 72 bytes:
+
+`"unlock" || random16 || ciphertext32 || tag16 || "\r\n"`
+
+Expected success response:
+
+`unlock_OK\r\n`
+
+Special replies handled by CTCDC include:
+
+- `Unknown command\r\n` — old-firmware/no-unlock-required path
+- `NotYet\r\n` — delayed retry path
+
+---
+
+## Software mode and post-unlock Open sequence
+
+After successful unlock:
+
+1. TX `SW_MODE1\r\n`
+2. require its command-`0x02` / selector-`0x6D` success response
+3. re-run `5A 03 00` GetMaximumPayloadSize
+4. required firmware-version-string query:
+   - TX `5A 09 01 02`
+5. capability query:
+   - TX `5A 26 01 05` (`QueryButtonsAvailable`)
+6. normal session/callback setup continues
+
+The firmware-version-string query is on the required `Open()` success path. The button query is not observed to gate overall Open success.
+
+---
+
+## Current safe ARM64 probe
+
+Branch:
+
+`poc/windows-arm64-usb-serial-ctcdc-init`
+
+Current HEAD:
+
+`2125308b869fae21cef3d074de1e7a7a0e250b27`
+
+Workflow:
+
+`Build X4 CTCDC Serial Probe ARM64`
+
+Workflow trigger remains manual-only:
+
+`workflow_dispatch`
+
+Stage B changes on this branch only:
+
+- corrected `5A 03 00` interpretation/logging to Maximum Payload Size
+- corrected DCB handling to preserve unrelated flags
+- added `GetCommTimeouts` before zeroing
+- updated probe README
+
+No unlock response, `SW_MODE1`, or Direct Mode command was added.
+
+The probe remains intentionally safe and stops after collecting the unlock-stage response.
+
+No hardware runtime log from this updated CTCDC probe is recorded yet.
+
+---
+
+## Creative driver-stack note
+
+The recovered official SB1815 package shows that X4 MI_03 uses the Microsoft USB Audio 2.0 path with Creative `CTUSBfilt64` attached as an upper filter for the relevant Creative stack.
+
+Do not simplify this to “X4 always uses `CtUSBa64.sys` as the main driver.”
+
+This is supporting architecture context; the current Direct Mode path is the CTCDC session described above.
 
 ---
 
 ## Current branch inventory
 
-At handoff time:
+At this handoff update:
 
-- `main` -> `6d5780dcd38191aec85a0cea52fe0be9c34e7cfc` before this documentation commit
+- `main` -> `36145b921ce6ff47f6414fb326c03a3b4fb8b994` immediately before this handoff commit
 - `diag/windows-arm64-audio-topology` -> `aa364102cd3d31aec5bc8b1844971466609fbe03`
 - `diag/windows-arm64-hid-caps` -> `348445524cf90cefb6649297949eab8e510b1eb1`
 - `diag/windows-arm64-usb-local` -> `3c0786b73cc1d25745e196ef6b9883253ce39b3e`
 - `poc/windows-arm64-direct-mode` -> `6b7fbf407caeac7345c69751e8957efec52cb360`
 - `poc/windows-arm64-hid-output-direct-mode` -> `5824c203f75ddf2ab0e0c5663f53ba674df68552`
 - `poc/windows-arm64-usb-serial-direct-mode` -> `b8d763de343e87c0af101d0b7495a40ba2ddd703`
-- `poc/windows-arm64-usb-serial-ctcdc-init` -> `d44a33936639cc76c935b59c0502133eaa5bcf2d`
+- `poc/windows-arm64-usb-serial-ctcdc-init` -> `2125308b869fae21cef3d074de1e7a7a0e250b27`
 
-Verify these against GitHub before resuming because branch heads can move.
+Verify actual GitHub heads before resuming.
 
 ---
 
-## Next task
+## Next task — Stage C only
 
-The next chat must start with the supplied `CTCDC.dll` and `CTIntrfu.dll` static analysis.
+Build the current `poc/windows-arm64-usb-serial-ctcdc-init` branch manually with its existing `workflow_dispatch` workflow and run the resulting ARM64 probe against the USB-connected X4.
 
-Primary goal:
+Capture and preserve:
 
-Recover the exact CTCDC session state machine before Direct Mode passthrough is accepted:
+`x4-ctcdc-probe.txt`
 
-1. serial initialization
-2. `5A 03 00` firmware/protocol query and expected response
-3. unlock decision
-4. `whoareyou.MyApp8\r\n`
-5. challenge/response algorithm and exact reply bytes
-6. software-mode transition
-7. any post-unlock/session initialization
-8. `ExecuteCommand(1001)` passthrough write/read framing
-9. only after that, reproduce `5A 39 03 00 05 00/01` on ARM64
+Required evidence:
 
-Do not jump back to BLE, HID guessing, or naked COM writes.
+1. exact bytes returned to `5A 03 00`
+2. whether a valid maximum-payload response is already available
+3. if not, whether unlock greeting is reached
+4. exact unlock-stage response bytes
+5. if normal `whoareyou` challenge is returned, exact seed4 + challenge32
 
-See `NEXT_ACTION_CTCDC.md` for the execution order.
+Do **not** send the generated AES-GCM unlock reply yet. First record the real challenge as hardware evidence.
+
+After that capture, proceed to Stage D in `NEXT_ACTION_CTCDC.md`.
+
+Do not jump back to BLE, HID guessing, naked COM Direct Mode writes, vendor-interface searches, UAC Extension Unit searches, `6A`, or guessed `5C` frames.
