@@ -12,12 +12,13 @@ Updated: 2026-09-04 KST
 6. ASIO COM Stage B2 fixed WaveRT lifecycle in FREE and BUSY states
 7. ASIO COM Stage B3A host double-buffer / `bufferSwitch` ABI with zero DMA sample copy
 8. ASIO COM Stage B3B host planar PCM -> interleaved mapped WaveRT DMA transfer with audible X4 output
+9. ASIO COM Stage B4A asynchronous `start()` / worker / joined `stop()` lifetime
 
 Do not intentionally reproduce the known green-screen collision.
 
-## Frozen hardware/format baseline
+## Frozen hardware/streaming baseline
 
-Keep unchanged for Stage B4A:
+Keep unchanged for the next experiment:
 
 - native Windows ARM64
 - X4 `msft_wave`
@@ -31,172 +32,96 @@ Keep unchanged for Stage B4A:
 - second coexistence gate immediately before every real `KsCreatePin`
 - `writePacket = PacketCount + 1`
 - `slot = writePacket % 2`
-- host `bufferSwitch(slot, ASIOFalse)` then planar -> interleaved mapped-buffer copy
-- `ACQUIRE -> PAUSE -> RUN -> PAUSE -> ACQUIRE -> STOP`
+- host callback then planar -> interleaved mapped-buffer copy
+- asynchronous single worker thread
+- `stop()` joins worker before `RUN -> PAUSE -> ACQUIRE -> STOP`
 - unregister notification event before closing handles
 
-## Stage B3A — hardware PASS
-
-Validated source:
-
-`exp/windows-arm64-asio-com-stage-b3a-callback-abi@46c22ef00f85f3668d6851844fa1558d250cedb8`
-
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3A_CALLBACK_RUNTIME_SUCCESS.md`.
-
-## Stage B3B — hardware PASS + audible output confirmed
+## Stage B3B — hardware PASS + audible output
 
 Validated source:
 
 `exp/windows-arm64-asio-com-stage-b3b-dma-copy@08ec4db74f6a5fcf49b301991628f458bb6d666e`
 
-Runtime summary:
-
-```text
-start=0
-startMessage=B3B RUN notif=20 cb=20 dmaWrites=20 dmaFrames=10240 nonzero=20444
-callbackStats count=20 indexErrors=0 directProcessErrors=0 hostSampleWrites=20480
-stop=0
-disposeBuffers=0
-DllCanUnloadNow hr=0x00000000
-STAGE B3B DMA COPY RESULT: PASS (HOST PCM COPIED TO WAVERT DMA)
-```
-
-This hardware-proves the independent native ARM64 path can transfer host ASIO PCM into the X4 mapped WaveRT render buffer with clean packet/slot synchronization and teardown.
-
-The tester explicitly confirmed that the short low-level 440 Hz stereo smoke tone was audible through the Sound Blaster X4. B3B therefore has both structured DMA/packet proof and audible end-to-end render confirmation.
+The low-level 440 Hz smoke signal was audibly confirmed through the Sound Blaster X4.
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
 
-## Stage B4A — asynchronous lifetime working; smoke boundary race diagnosed
+## Stage B4A — hardware PASS
 
-Branch:
+Validated source:
 
-`exp/windows-arm64-asio-com-stage-b4a-async-worker`
+`exp/windows-arm64-asio-com-stage-b4a-async-worker@996025332bf17341b584095260c1abec93222d84`
 
-Driver/worker implementation remains the original B4A implementation. The corrected registry-free smoke HEAD is:
-
-`996025332bf17341b584095260c1abec93222d84`
-
-Stage B4A starts from the exact validated B3B HEAD and changes only threading/lifetime behavior.
-
-### Runtime model
-
-`start()`:
-
-1. creates a stop event
-2. enters `ACQUIRE -> PAUSE -> RUN`
-3. starts one Win32 worker
-4. returns `ASE_OK` without waiting for callback completion
-
-Worker:
-
-- waits on stop event + WaveRT notification event
-- reads PacketCount and presentation position
-- preserves B3B packet/slot mapping
-- invokes host `bufferSwitch`
-- performs the same 512-frame planar -> interleaved WaveRT copy
-
-`stop()`:
-
-1. signals stop event
-2. joins worker
-3. if join fails, hardware teardown is explicitly withheld
-4. only after join succeeds performs `RUN -> PAUSE -> ACQUIRE -> STOP`
-
-`disposeBuffers()` does not close event/pin/filter while a worker remains unjoined.
-
-No MMCSS/AVRT priority is added yet.
-
-### First hardware run — engine/lifetime succeeded, old smoke assertion failed
-
-The first B4A hardware run proved the async architecture itself:
+Corrected runtime proof:
 
 ```text
-mainThread=24792
+mainThread=15264
 start=0
-startMessage=B4A start OK: workerThreadId=10272; callbacks continue asynchronously
-startDurationMs=4.000 callbacksAtStartReturn=0 returnedBefore20=YES
-B4A worker START thread=10272
+startMessage=B4A start OK: workerThreadId=17304; callbacks continue asynchronously
+startDurationMs=4.035 callbacksAtStartReturn=0 returnedBefore20=YES
+B4A worker START thread=17304
 ...
-callbacksBeforeStop=20 callbackThread=10272 mainThread=24792
-```
-
-Before `stop()`'s stop event won the worker wait, one already-arriving notification completed. Final safe state was:
-
-```text
-B4A callback=21 ... copy=OK thread=10272
-B4A worker STOP requested thread=10272
-B4A worker EXIT thread=10272
+callbacksBeforeStop=20 callbackThread=17304 mainThread=15264
+B4A worker STOP requested thread=17304
+B4A worker EXIT thread=17304
 B4A KSSTATE 2 -> OK
 B4A KSSTATE 1 -> OK
 B4A KSSTATE 0 -> OK
 stop=0
-stopMessage=B4A stop OK workerJoined=YES notif=21 cb=21 dmaWrites=21 dmaFrames=10752
-callbackStats count=21 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=21504
-B4A unregister notification -> OK
-disposeBuffers=0
-DllCanUnloadNow hr=0x00000000
-```
-
-The old smoke printed `FAIL` only because it incorrectly required exactly 20 callbacks both before and after `stop()`.
-
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_STOP_BOUNDARY_RACE.md`.
-
-### Corrected B4A smoke invariant
-
-Do not artificially stop the real asynchronous worker at callback 20.
-
-The corrected smoke now:
-
-1. waits until at least 20 callbacks have occurred
-2. requests `stop()`
-3. permits any notification already in flight before stop signalling to finish
-4. requires `workerJoined=YES`
-5. requires the final `cb`, `dmaWrites`, and `dmaFrames` values reported by the driver to match the actual final callback count
-6. waits 50 ms after `stop()` returns and requires callback count to remain unchanged
-7. requires zero callback-index, directProcess and thread errors
-8. requires clean buffer disposal and COM unload
-
-Only `smoke_b4a.cpp` changed for this correction. Driver/worker/WaveRT code was not modified.
-
-## Immediate next action — rebuild and rerun B4A smoke
-
-Manual workflow:
-
-`Build ASIO COM Stage B4A Async ARM64`
-
-It is `workflow_dispatch` only and checks out the latest `exp/windows-arm64-asio-com-stage-b4a-async-worker` branch.
-
-Run with normal Windows X4 playback idle:
-
-```bat
-x4-asio-stage-b4a-smoke.exe
-```
-
-Expected proof points now allow a legitimate stop-boundary overshoot such as 20 -> 21:
-
-```text
-start=0
-startDurationMs=... callbacksAtStartReturn=... returnedBefore20=YES
-callbacksBeforeStop=20 callbackThread=<worker> mainThread=<different>
-...
-stop=0
-stopMessage=B4A stop OK workerJoined=YES notif=21 cb=21 dmaWrites=21 dmaFrames=10752
-callbackStats count=21 quiescentAfterStop=21 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=21504
+stopMessage=B4A stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
+callbackStats count=20 quiescentAfterStop=20 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=20480
 disposeBuffers=0
 DllCanUnloadNow hr=0x00000000
 STAGE B4A ASYNC RESULT: PASS (ASYNC START/WORKER/STOP LIFETIME)
 ```
 
-The exact final count need not be 21; the required invariant is that it is at least the target count, all driver counters match it, and it remains quiescent after joined stop returns.
+Hardware-proven B4A invariants:
 
-If Windows playback owns the X4, BUSY must still be accepted only as a safe refusal. Never bypass BUSY.
+- `start()` returns before callback processing completes
+- callback/DMA work occurs on one worker thread distinct from main
+- B3B PacketCount-derived DMA mapping is preserved
+- worker is joined before KS state teardown
+- no callback occurs after joined `stop()` returns
+- cleanup and COM unload remain clean
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_RUNTIME_SUCCESS.md`.
+
+## Immediate next stage — B4B minimum host query contract
+
+Create a new branch from exact validated B4A HEAD `996025332bf17341b584095260c1abec93222d84`.
+
+Do not change the proven streaming/lifetime path.
+
+Add only the minimum host-facing query contract that real ASIO hosts commonly inspect before/around buffer creation:
+
+1. concrete 4-byte-packed `ASIOClockSource`, `ASIOChannelInfo`, `ASIOSamples`, and `ASIOTimeStamp` definitions matching the Windows ASIO ABI
+2. `getChannelInfo()` for output channels 0 and 1
+   - output only
+   - channel group 0
+   - sample type `ASIOSTInt16LSB`
+   - deterministic channel names
+   - active flag reflects whether buffers currently exist
+3. `getClockSources()` returns one current internal clock source
+   - index 0
+   - no associated channel/group (`-1/-1`)
+4. `setClockSource(0)` succeeds; any other reference returns `ASE_InvalidParameter`
+5. `getSamplePosition()`
+   - reset logical position to 0 at `start()`
+   - advance exactly 512 frames per successful host callback
+   - return a monotonic block-aligned sample position
+   - return a monotonic timestamp associated with the current logical block
+   - after the engine is not advancing, return `ASE_SPNotAdvancing`
+6. registry-free smoke must validate metadata before streaming and sample-position advancement during the existing B4A worker run
+
+This stage is inquiry/metadata only. Do not add `bufferSwitchTimeInfo` negotiation yet; keep the callback transport unchanged so any regression is attributable to the new query contract only.
 
 ## Still frozen
 
 Do not add yet:
 
 - DAW registration/testing
+- `bufferSwitchTimeInfo` / ASIO time-info negotiation
 - MMCSS/AVRT worker priority
 - capture
 - 24-bit transport
@@ -207,7 +132,7 @@ Do not add yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-After B4A passes, complete the remaining host-facing ASIO contract required by real DAWs (`getChannelInfo`, sample-position/time reporting, clock-source behavior and capability negotiation as required) before registration/DAW testing.
+After B4B passes, the next logical step is time-info capability negotiation (`bufferSwitchTimeInfo`) and then controlled driver registration / real DAW loading.
 
 ## Architecture
 
