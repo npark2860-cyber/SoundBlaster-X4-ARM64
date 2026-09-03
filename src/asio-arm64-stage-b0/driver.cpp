@@ -8,9 +8,10 @@
 #include <new>
 
 #include "asio_compat.h"
+#include "preflight.h"
 
 #if !defined(_M_ARM64) || defined(_M_ARM64EC)
-#error Stage B0 must be built for native Windows ARM64, not ARM64EC.
+#error Stage B1 must be built for native Windows ARM64, not ARM64EC.
 #endif
 
 namespace {
@@ -61,7 +62,58 @@ public:
 
     ASIOBool init(void* sysHandle) override {
         (void)sysHandle;
-        strcpy_s(last_error_, "Stage B0 COM shell: streaming engine not connected yet");
+
+        const X4InstancePreflightResult preflight = run_x4_instance_preflight();
+
+        if (!preflight.device_found) {
+            strcpy_s(last_error_, "Stage B1 preflight FAILED: X4 msft_wave not found");
+            return ASIOFalse;
+        }
+
+        if (!preflight.filter_opened) {
+            sprintf_s(
+                last_error_,
+                sizeof(last_error_),
+                "Stage B1 preflight FAILED: filter open Win32=%lu",
+                preflight.open_error);
+            return ASIOFalse;
+        }
+
+        if (!preflight.local_ok || !preflight.global_ok) {
+            sprintf_s(
+                last_error_,
+                sizeof(last_error_),
+                "Stage B1 preflight INDETERMINATE: C ok=%d err=%lu G ok=%d err=%lu",
+                preflight.local_ok ? 1 : 0,
+                preflight.local_error,
+                preflight.global_ok ? 1 : 0,
+                preflight.global_error);
+            return ASIOFalse;
+        }
+
+        const bool local_busy = preflight.local_current >= preflight.local_possible;
+        const bool global_busy = preflight.global_current >= preflight.global_possible;
+
+        if (local_busy || global_busy) {
+            sprintf_s(
+                last_error_,
+                sizeof(last_error_),
+                "Stage B1 preflight BUSY: C %lu/%lu G %lu/%lu; KsCreatePin SKIPPED",
+                preflight.local_current,
+                preflight.local_possible,
+                preflight.global_current,
+                preflight.global_possible);
+            return ASIOFalse;
+        }
+
+        sprintf_s(
+            last_error_,
+            sizeof(last_error_),
+            "Stage B1 preflight FREE: C %lu/%lu G %lu/%lu; streaming not connected",
+            preflight.local_current,
+            preflight.local_possible,
+            preflight.global_current,
+            preflight.global_possible);
         return ASIOTrue;
     }
 
@@ -71,7 +123,7 @@ public:
     }
 
     long getDriverVersion() override {
-        return 100;
+        return 101;
     }
 
     void getErrorMessage(char* string) override {
@@ -175,7 +227,7 @@ public:
 
 private:
     volatile LONG ref_count_ = 1;
-    char last_error_[124] = "Stage B0 COM shell";
+    char last_error_[124] = "Stage B1 COM preflight not initialized";
 };
 
 class X4ClassFactory final : public IClassFactory {
