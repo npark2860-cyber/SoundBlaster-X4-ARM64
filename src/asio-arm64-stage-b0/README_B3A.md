@@ -26,6 +26,13 @@ B3A completes only these ASIO ABI structures:
 - `ASIOBufferInfo`
 - `ASIOCallbacks`
 
+The public ASIO SDK forces 4-byte packing for its interface structures. The ARM64 compile-time guards therefore require:
+
+```text
+sizeof(ASIOBufferInfo)=24 align=4
+sizeof(ASIOCallbacks)=32 align=4
+```
+
 `createBuffers()` accepts exactly:
 
 - 2 output channels
@@ -86,7 +93,7 @@ If Windows playback already owns the X4, a clean BUSY refusal is also an expecte
 Important lines include:
 
 ```text
-ABI sizeof(ASIOBufferInfo)=24 align=8 sizeof(ASIOCallbacks)=32 align=8
+ABI sizeof(ASIOBufferInfo)=24 align=4 sizeof(ASIOCallbacks)=32 align=4
 init=1
 B2 PRE-PIN GATE: C 0/1 G 0/1 busy=NO
 createBuffers=0
