@@ -8,15 +8,16 @@ Updated: 2026-09-04 KST
 2. active-playback collision mechanism
 3. Creative-equivalent pin-instance coexistence gate
 4. native ARM64 ASIO COM Stage B0 ABI shell
-5. ASIO COM Stage B1 coexistence preflight in both FREE and BUSY states
-6. ASIO COM Stage B2 fixed WaveRT engine in both BUSY and FREE states
+5. ASIO COM Stage B1 coexistence preflight in FREE and BUSY states
+6. ASIO COM Stage B2 fixed WaveRT lifecycle in FREE and BUSY states
 7. ASIO COM Stage B3A host double-buffer / `bufferSwitch` ABI with zero DMA sample copy
+8. ASIO COM Stage B3B host planar PCM -> interleaved mapped WaveRT DMA transfer
 
 Do not intentionally reproduce the known green-screen collision.
 
-## Frozen hardware baseline
+## Frozen hardware/format baseline
 
-Keep unchanged while adding sample transfer:
+Keep unchanged for the next experiment:
 
 - native Windows ARM64
 - X4 `msft_wave`
@@ -28,11 +29,11 @@ Keep unchanged while adding sample transfer:
 - NotificationCount=2
 - 512 frames / 2048 bytes per WaveRT packet
 - ASIO buffer size 512 frames
-- coexistence gate at COM init
+- coexistence gate at COM `init()`
 - second coexistence gate immediately before every real `KsCreatePin`
-- synchronous 20-notification diagnostic RUN
+- PacketCount-derived write-ahead mapping
 - `ACQUIRE -> PAUSE -> RUN -> PAUSE -> ACQUIRE -> STOP`
-- unregister event before closing handles
+- unregister notification event before closing handles
 
 ## Stage B3A — hardware PASS
 
@@ -40,117 +41,48 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b3a-callback-abi@46c22ef00f85f3668d6851844fa1558d250cedb8`
 
-Confirmed:
+Confirmed host-side callback ABI:
 
 ```text
-ABI sizeof(ASIOBufferInfo)=24 align=4 sizeof(ASIOCallbacks)=32 align=4
-init=1
-B2 PRE-PIN GATE: C 0/1 G 0/1 busy=NO
-createBuffers=0
-ASIO buffers ... distinctNonNull=YES
-bufferSwitch callbacks=20, alternating 0/1
-start=0
-callbackStats count=20 indexErrors=0 directProcessErrors=0 hostSampleWrites=40 hardwareBufferWrites=0
-stop=0
-disposeBuffers=0
-DllCanUnloadNow hr=0x00000000
+callbacks=20
+indexErrors=0
+directProcessErrors=0
+hardwareBufferWrites=0
 STAGE B3A CALLBACK RESULT: PASS (ASIO CALLBACK ABI, NO DMA COPY)
 ```
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3A_CALLBACK_RUNTIME_SUCCESS.md`.
 
-## Stage B3B — implemented, build/runtime pending
+## Stage B3B — hardware PASS
 
-Branch:
+Validated source:
 
-`exp/windows-arm64-asio-com-stage-b3b-dma-copy`
+`exp/windows-arm64-asio-com-stage-b3b-dma-copy@08ec4db74f6a5fcf49b301991628f458bb6d666e`
 
-Implementation HEAD:
-
-`08ec4db74f6a5fcf49b301991628f458bb6d666e`
-
-B3B starts from the exact validated B3A HEAD and adds the first host PCM -> mapped WaveRT data copy.
-
-### Packet/slot rule
-
-Every WaveRT notification still queries `KSPROPERTY_RTAUDIO_PACKETCOUNT`.
-
-For `PacketCount=P`:
+B3B used the same ASIO callback index as the PacketCount-derived safe WaveRT target slot:
 
 ```text
-writePacket = P + 1
+writePacket = PacketCount + 1
 slot = writePacket % 2
 ```
 
-The same derived `slot` is:
-
-1. passed to host `bufferSwitch(slot, ASIOFalse)`
-2. filled by the host callback
-3. copied after callback return into the matching 2048-byte WaveRT cyclic-buffer slot
-
-This deliberately avoids choosing a DMA write location from callback parity alone and preserves resynchronization if PacketCount skips.
-
-### Data format
-
-- host: planar signed int16, L and R, 512 frames
-- hardware buffer: interleaved signed int16 stereo
-- one copy = 512 frames = 1024 int16 samples = 2048 bytes
-- expected 20 copies = 10,240 frames
-- if WaveRT `CallMemoryBarrier` is true, `MemoryBarrier()` is issued after each copy
-
-### Deliberately excluded from B3B
-
-- `KSPROPERTY_RTAUDIO_SETWRITEPACKET`
-- production callback thread
-- DAW registration
-- capture
-- 24-bit
-- multichannel
-- sample-rate / buffer-size expansion
-
-The B3A files remain in the branch unchanged for comparison; B3B uses separate `driver_b3b.cpp`, `wavert_engine_b3b.cpp`, and `smoke_b3b.cpp` selected by CMake.
-
-## Immediate next action — build B3B
-
-Manual workflow:
-
-`Build ASIO COM Stage B3B DMA Copy ARM64`
-
-It is `workflow_dispatch` only.
-
-Artifact contains:
-
-- `x4-asio-arm64.dll`
-- `x4-asio-stage-b3b-smoke.exe`
-
-### First runtime test
-
-1. stop all normal Windows playback through the X4
-2. set speaker/headphone volume low
-3. run `x4-asio-stage-b3b-smoke.exe`
-4. do not bypass BUSY
-
-The smoke generates a low-level 440 Hz stereo tone at peak sample 1200/32767 for the fixed 20-callback diagnostic run.
-
-Expected FREE-path mapping begins:
+Runtime-confirmed beginning:
 
 ```text
-init=1
-B3B PRE-PIN GATE: C 0/1 G 0/1 busy=NO
-B3B WaveRT ... ActualBufferSize=4096 ... packetBytes=2048
-createBuffers=0
-B3B notification=1 packet=1 writePacket=2 slot=0 ...
-B3B bufferSwitch callback=1 index=0 ...
-B3B DMA writePacket=2 slot=0 frames=512 nonzeroSamples=...
-B3B notification=2 packet=2 writePacket=3 slot=1 ...
-...
+packet=1 -> writePacket=2 -> slot=0
+bufferSwitch index=0
+DMA copy slot=0 frames=512 copy=OK
+
+packet=2 -> writePacket=3 -> slot=1
+bufferSwitch index=1
+DMA copy slot=1 frames=512 copy=OK
 ```
 
-Required end-state:
+Final counters:
 
 ```text
 start=0
-startMessage=B3B RUN notif=20 cb=20 dmaWrites=20 dmaFrames=10240 nonzero=...
+startMessage=B3B RUN notif=20 cb=20 dmaWrites=20 dmaFrames=10240 nonzero=20444
 callbackStats count=20 indexErrors=0 directProcessErrors=0 hostSampleWrites=20480
 stop=0
 disposeBuffers=0
@@ -158,7 +90,59 @@ DllCanUnloadNow hr=0x00000000
 STAGE B3B DMA COPY RESULT: PASS (HOST PCM COPIED TO WAVERT DMA)
 ```
 
-Also record whether the short low-level tone was audible. Audible perception is supporting evidence; the structured counters/state cleanup remain the primary PASS criteria.
+This proves the native ARM64 path can transfer host ASIO PCM into the X4's mapped WaveRT render buffer while preserving packet/slot synchronization and clean teardown.
+
+The smoke was designed to generate a short low-level 440 Hz tone, but perceptual audibility was not explicitly reported with the runtime output. Do not record tone audibility as hardware-proven until the tester explicitly reports it.
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
+
+## Immediate next stage — B4A asynchronous start/stop lifetime
+
+The next missing architectural behavior is the ASIO runtime lifetime model.
+
+Current B3B `IASIO::start()` performs the 20-notification loop synchronously and returns only after it finishes. A real ASIO host requires `start()` to return promptly while callbacks continue on a worker until `stop()` requests shutdown.
+
+Create a new branch from the exact validated B3B HEAD.
+
+B4A changes only threading/lifetime behavior:
+
+1. preserve all B3B format, buffer, packet-slot and DMA-copy behavior
+2. `start()` transitions the WaveRT pin to RUN, starts one worker thread and returns `ASE_OK` promptly
+3. the worker waits for WaveRT notifications, reads PacketCount/presentation position, calls host `bufferSwitch`, and performs the same planar -> interleaved DMA packet copy
+4. the registry-free smoke waits until exactly 20 successful callbacks/copies are observed
+5. `stop()` signals worker shutdown, joins it, then performs `RUN -> PAUSE -> ACQUIRE -> STOP`
+6. `disposeBuffers()` must never close event/pin/filter handles until the worker is fully joined
+7. worker failure must be latched and surfaced to the smoke without unsafe handle teardown
+8. preserve both FREE/BUSY coexistence gates
+9. no DAW registration yet
+10. no format expansion yet
+
+B4A smoke must prove at minimum:
+
+- `start()` returned before callback 20
+- callbacks and DMA writes occur from the worker
+- exactly 20 diagnostic callbacks/copies complete
+- callback indices follow PacketCount-derived slots
+- packet discontinuities = 0
+- presentation position regressions = 0
+- worker joins before pin/event/filter close
+- normal STOP and COM unload remain clean
+
+## Still frozen
+
+Do not add yet:
+
+- DAW registration/testing
+- capture
+- 24-bit transport
+- multichannel
+- sample-rate expansion
+- dynamic buffer-size expansion
+- repeated reopen stress
+- Creative runtime dependencies
+- custom kernel driver
+
+After B4A passes, fill the remaining host-facing ASIO contract needed by real DAWs (`getChannelInfo`, sample-position/time reporting, clock-source behavior, host capability negotiation as required) before registering the driver for DAW testing.
 
 ## Architecture
 
