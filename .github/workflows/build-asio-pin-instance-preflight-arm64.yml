@@ -1,0 +1,61 @@
+name: Build ASIO Pin-Instance Preflight ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 ASIO Pin-Instance Preflight
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/asio-pin-instance-preflight -B build/asio-pin-instance-preflight -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/asio-pin-instance-preflight --config Release --parallel
+
+      - name: Verify ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/asio-pin-instance-preflight/Release/x4-asio-pin-instance-preflight.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-asio-pin-instance-preflight.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-asio-pin-instance-preflight.exe
+          Copy-Item src/asio-pin-instance-preflight/README.md dist/README.md
+          Compress-Archive -Path dist/x4-asio-pin-instance-preflight.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ASIO-Pin-Instance-Preflight-ARM64.zip -Force
+
+          $exeHash = (Get-FileHash dist/x4-asio-pin-instance-preflight.exe -Algorithm SHA256).Hash
+          $zipHash = (Get-FileHash dist/SoundBlaster-X4-ASIO-Pin-Instance-Preflight-ARM64.zip -Algorithm SHA256).Hash
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $exeHash"
+          "ZIP SHA256: $zipHash"
+
+      - name: Upload preflight ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-Pin-Instance-Preflight-ARM64
+          path: dist/SoundBlaster-X4-ASIO-Pin-Instance-Preflight-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
