@@ -1,19 +1,28 @@
-# Sound Blaster X4 native ARM64 ASIO — Stage B0
+# Sound Blaster X4 native ARM64 ASIO — Stage B1 preflight
 
-Stage B0 validates only the Windows ARM64 ASIO COM ABI shell.
+Stage B1 adds the already hardware-proven KS pin-instance coexistence preflight to the Stage B0 native ARM64 ASIO COM shell.
 
 ## Safety scope
 
-This stage does **not**:
+On `IASIO::init()`, Stage B1 only:
 
-- open the X4 KS filter
+1. discovers the X4 `msft_wave` filter
+2. opens the filter
+3. queries Render Pin 1 `KSPROPERTY_PIN_CINSTANCES`
+4. queries Render Pin 1 `KSPROPERTY_PIN_GLOBALCINSTANCES`
+5. closes the filter immediately
+
+Stage B1 does **not**:
+
 - call `KsCreatePin`
 - allocate a WaveRT buffer
+- register a notification event
 - change KS state
-- access the X4 hardware
+- write audio data
+- invoke the streaming engine
 - register itself unless `DllRegisterServer` is explicitly invoked
 
-The supplied smoke executable loads the DLL directly with `LoadLibraryW`, obtains `DllGetClassObject`, creates the ASIO object using the driver's own CLSID as the requested interface ID, and calls metadata/capability methods only.
+The supplied smoke executable remains registry-free and loads the DLL directly.
 
 ## Independent CLSID
 
@@ -21,44 +30,58 @@ The supplied smoke executable loads the DLL directly with `LoadLibraryW`, obtain
 
 Creative's CLSID is deliberately not reused.
 
-## Expected smoke result
+## FREE behavior
 
-Run from a directory containing both files:
+With no other X4 render stream active, the hardware-proven expectation is:
+
+- `CINSTANCES CurrentCount=0 / PossibleCount=1`
+- `GLOBALCINSTANCES CurrentCount=0 / PossibleCount=1`
+- `init=1`
+- error text begins `Stage B1 preflight FREE:`
+- `start()` still returns `ASE_InvalidMode (-997)` because streaming is not connected yet
+
+Expected final line:
+
+```text
+STAGE B1 COM PREFLIGHT RESULT: PASS (FREE)
+```
+
+## BUSY behavior
+
+With normal Windows playback actively using the X4, the previously proven expectation is:
+
+- `GLOBALCINSTANCES CurrentCount=1 / PossibleCount=1`
+- `init=0`
+- error text begins `Stage B1 preflight BUSY:`
+- message includes `KsCreatePin SKIPPED`
+- the smoke harness does not call `start()`
+
+Expected final line:
+
+```text
+STAGE B1 COM PREFLIGHT RESULT: PASS (BUSY SAFELY BLOCKED)
+```
+
+A query failure is treated fail-closed as `INDETERMINATE` and returns `init=0`.
+
+## Files
+
+Run from a directory containing:
 
 ```text
 x4-asio-arm64.dll
-x4-asio-stage-b0-smoke.exe
+x4-asio-stage-b1-smoke.exe
 ```
 
 Then:
 
 ```bat
-x4-asio-stage-b0-smoke.exe
+x4-asio-stage-b1-smoke.exe
 ```
 
-Expected important lines:
+## Test order
 
-```text
-DllGetClassObject hr=0x00000000
-IClassFactory::CreateInstance hr=0x00000000
-init=1
-driverName=Sound Blaster X4 ARM64
-getChannels=0 inputs=0 outputs=2
-getBufferSize=0 min=512 max=512 preferred=512 granularity=0
-getSampleRate=0 rate=48000.0
-start=-997 (Stage B0 expected ASE_InvalidMode=-997)
-DllCanUnloadNow hr=0x00000000
-STAGE B0 COM SMOKE RESULT: PASS
-```
+1. Run once with X4 playback idle.
+2. Only after idle reports `PASS (FREE)`, run once while normal Windows X4 playback is active.
 
-`start()` intentionally returns `ASE_InvalidMode` because the WaveRT engine is not connected in Stage B0.
-
-## Registration
-
-The DLL exports `DllRegisterServer` / `DllUnregisterServer` for the later host-registration test. Do not register Stage B0 until the registry-free smoke test passes.
-
-When registration is eventually tested, the intended standard ASIO key is:
-
-`HKLM\SOFTWARE\ASIO\Sound Blaster X4 ARM64 ASIO`
-
-with the independent CLSID above.
+Both tests remain safe because Stage B1 never calls `KsCreatePin`.
