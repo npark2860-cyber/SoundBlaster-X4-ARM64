@@ -173,7 +173,7 @@ public:
     ASIOError getLatencies(long* inputLatency, long* outputLatency) override {
         if (!inputLatency || !outputLatency) return ASE_InvalidParameter;
         *inputLatency = 0;
-        *outputLatency = kHostBufferFrames * 2;
+        *outputLatency = kHostBufferFrames;
         return ASE_OK;
     }
 
