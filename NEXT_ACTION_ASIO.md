@@ -67,26 +67,26 @@ The tester explicitly confirmed that the short low-level 440 Hz stereo smoke ton
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
 
-## Stage B4A — asynchronous start/stop worker implemented
+## Stage B4A — asynchronous lifetime working; smoke boundary race diagnosed
 
 Branch:
 
 `exp/windows-arm64-asio-com-stage-b4a-async-worker`
 
-Implementation HEAD:
+Driver/worker implementation remains the original B4A implementation. The corrected registry-free smoke HEAD is:
 
-`4c8e1c4380ae5b682d03b8b12378a85c509f1149`
+`996025332bf17341b584095260c1abec93222d84`
 
 Stage B4A starts from the exact validated B3B HEAD and changes only threading/lifetime behavior.
 
 ### Runtime model
 
-`start()` now:
+`start()`:
 
 1. creates a stop event
 2. enters `ACQUIRE -> PAUSE -> RUN`
 3. starts one Win32 worker
-4. returns `ASE_OK` without waiting for the callback run to finish
+4. returns `ASE_OK` without waiting for callback completion
 
 Worker:
 
@@ -107,43 +107,88 @@ Worker:
 
 No MMCSS/AVRT priority is added yet.
 
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_IMPLEMENTED.md`.
+### First hardware run — engine/lifetime succeeded, old smoke assertion failed
 
-## Immediate next action — build and run B4A idle smoke
+The first B4A hardware run proved the async architecture itself:
+
+```text
+mainThread=24792
+start=0
+startMessage=B4A start OK: workerThreadId=10272; callbacks continue asynchronously
+startDurationMs=4.000 callbacksAtStartReturn=0 returnedBefore20=YES
+B4A worker START thread=10272
+...
+callbacksBeforeStop=20 callbackThread=10272 mainThread=24792
+```
+
+Before `stop()`'s stop event won the worker wait, one already-arriving notification completed. Final safe state was:
+
+```text
+B4A callback=21 ... copy=OK thread=10272
+B4A worker STOP requested thread=10272
+B4A worker EXIT thread=10272
+B4A KSSTATE 2 -> OK
+B4A KSSTATE 1 -> OK
+B4A KSSTATE 0 -> OK
+stop=0
+stopMessage=B4A stop OK workerJoined=YES notif=21 cb=21 dmaWrites=21 dmaFrames=10752
+callbackStats count=21 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=21504
+B4A unregister notification -> OK
+disposeBuffers=0
+DllCanUnloadNow hr=0x00000000
+```
+
+The old smoke printed `FAIL` only because it incorrectly required exactly 20 callbacks both before and after `stop()`.
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_STOP_BOUNDARY_RACE.md`.
+
+### Corrected B4A smoke invariant
+
+Do not artificially stop the real asynchronous worker at callback 20.
+
+The corrected smoke now:
+
+1. waits until at least 20 callbacks have occurred
+2. requests `stop()`
+3. permits any notification already in flight before stop signalling to finish
+4. requires `workerJoined=YES`
+5. requires the final `cb`, `dmaWrites`, and `dmaFrames` values reported by the driver to match the actual final callback count
+6. waits 50 ms after `stop()` returns and requires callback count to remain unchanged
+7. requires zero callback-index, directProcess and thread errors
+8. requires clean buffer disposal and COM unload
+
+Only `smoke_b4a.cpp` changed for this correction. Driver/worker/WaveRT code was not modified.
+
+## Immediate next action — rebuild and rerun B4A smoke
 
 Manual workflow:
 
 `Build ASIO COM Stage B4A Async ARM64`
 
-It is `workflow_dispatch` only.
+It is `workflow_dispatch` only and checks out the latest `exp/windows-arm64-asio-com-stage-b4a-async-worker` branch.
 
-Run artifact executable with X4 normal Windows playback idle:
+Run with normal Windows X4 playback idle:
 
 ```bat
 x4-asio-stage-b4a-smoke.exe
 ```
 
-Expected proof points:
+Expected proof points now allow a legitimate stop-boundary overshoot such as 20 -> 21:
 
 ```text
 start=0
-startMessage=B4A start OK: workerThreadId=...; callbacks continue asynchronously
 startDurationMs=... callbacksAtStartReturn=... returnedBefore20=YES
-B4A worker START thread=...
+callbacksBeforeStop=20 callbackThread=<worker> mainThread=<different>
 ...
-callbacksBeforeStop=20 callbackThread=... mainThread=...
-B4A worker STOP requested thread=...
-B4A worker EXIT thread=...
-B4A KSSTATE 2 -> OK
-B4A KSSTATE 1 -> OK
-B4A KSSTATE 0 -> OK
 stop=0
-stopMessage=B4A stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
-callbackStats count=20 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=20480
+stopMessage=B4A stop OK workerJoined=YES notif=21 cb=21 dmaWrites=21 dmaFrames=10752
+callbackStats count=21 quiescentAfterStop=21 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=21504
 disposeBuffers=0
 DllCanUnloadNow hr=0x00000000
 STAGE B4A ASYNC RESULT: PASS (ASYNC START/WORKER/STOP LIFETIME)
 ```
+
+The exact final count need not be 21; the required invariant is that it is at least the target count, all driver counters match it, and it remains quiescent after joined stop returns.
 
 If Windows playback owns the X4, BUSY must still be accepted only as a safe refusal. Never bypass BUSY.
 
