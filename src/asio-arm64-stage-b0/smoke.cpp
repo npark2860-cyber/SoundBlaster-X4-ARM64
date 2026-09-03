@@ -3,20 +3,21 @@
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <cwchar>
 
 #include "asio_compat.h"
 
 #if !defined(_M_ARM64) || defined(_M_ARM64EC)
-#error Stage B0 smoke test must be built for native Windows ARM64, not ARM64EC.
+#error Stage B1 smoke test must be built for native Windows ARM64, not ARM64EC.
 #endif
 
 using DllGetClassObjectFn = HRESULT (STDAPICALLTYPE*)(REFCLSID, REFIID, LPVOID*);
 using DllCanUnloadNowFn = HRESULT (STDAPICALLTYPE*)();
 
 int main() {
-    std::printf("Sound Blaster X4 ARM64 ASIO Stage B0 COM smoke\n");
-    std::printf("SAFETY: no registry writes; no KS open; no KsCreatePin; no WaveRT; no hardware I/O.\n");
+    std::printf("Sound Blaster X4 ARM64 ASIO Stage B1 COM preflight smoke\n");
+    std::printf("SAFETY: registry-free; KS filter GET-only preflight; no KsCreatePin; no WaveRT; no KS state changes.\n");
 
     wchar_t exe_path[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, exe_path, MAX_PATH)) {
@@ -78,9 +79,18 @@ int main() {
 
     const ASIOBool init_ok = driver->init(nullptr);
 
+    char error_text[124]{};
+    driver->getErrorMessage(error_text);
+
+    const bool free_state =
+        init_ok == ASIOTrue &&
+        std::strncmp(error_text, "Stage B1 preflight FREE:", 24) == 0;
+    const bool busy_state =
+        init_ok == ASIOFalse &&
+        std::strncmp(error_text, "Stage B1 preflight BUSY:", 24) == 0;
+
     char driver_name[32]{};
     driver->getDriverName(driver_name);
-
     const long version = driver->getDriverVersion();
 
     long inputs = -1;
@@ -99,12 +109,17 @@ int main() {
 
     ASIOSampleRate sample_rate = 0.0;
     const ASIOError rate_hr = driver->getSampleRate(&sample_rate);
-    const ASIOError start_hr = driver->start();
 
-    char error_text[124]{};
-    driver->getErrorMessage(error_text);
+    ASIOError start_hr = ASE_InvalidMode;
+    bool start_called = false;
+    if (free_state) {
+        start_hr = driver->start();
+        start_called = true;
+    }
 
     std::printf("init=%ld\n", init_ok);
+    std::printf("preflightState=%s\n", free_state ? "FREE" : (busy_state ? "BUSY" : "ERROR"));
+    std::printf("errorMessage=%s\n", error_text);
     std::printf("driverName=%s\n", driver_name);
     std::printf("driverVersion=%ld\n", version);
     std::printf("getChannels=%ld inputs=%ld outputs=%ld\n", channels_hr, inputs, outputs);
@@ -116,8 +131,11 @@ int main() {
         preferred_size,
         granularity);
     std::printf("getSampleRate=%ld rate=%.1f\n", rate_hr, sample_rate);
-    std::printf("start=%ld (Stage B0 expected ASE_InvalidMode=%ld)\n", start_hr, ASE_InvalidMode);
-    std::printf("errorMessage=%s\n", error_text);
+    if (start_called) {
+        std::printf("start=%ld (Stage B1 expected ASE_InvalidMode=%ld; streaming still disconnected)\n", start_hr, ASE_InvalidMode);
+    } else {
+        std::printf("start=SKIPPED because init did not report FREE\n");
+    }
 
     driver->Release();
     factory->Release();
@@ -125,8 +143,7 @@ int main() {
     const HRESULT unload_hr = can_unload();
     std::printf("DllCanUnloadNow hr=0x%08lX\n", static_cast<unsigned long>(unload_hr));
 
-    const bool pass =
-        init_ok == ASIOTrue &&
+    const bool metadata_ok =
         channels_hr == ASE_OK &&
         inputs == 0 &&
         outputs == 2 &&
@@ -137,11 +154,21 @@ int main() {
         granularity == 0 &&
         rate_hr == ASE_OK &&
         sample_rate == 48000.0 &&
-        start_hr == ASE_InvalidMode &&
         unload_hr == S_OK;
+
+    const bool free_ok = free_state && start_called && start_hr == ASE_InvalidMode;
+    const bool busy_ok = busy_state && !start_called && std::strstr(error_text, "KsCreatePin SKIPPED") != nullptr;
+    const bool pass = metadata_ok && (free_ok || busy_ok);
 
     FreeLibrary(module);
 
-    std::printf(pass ? "STAGE B0 COM SMOKE RESULT: PASS\n" : "STAGE B0 COM SMOKE RESULT: FAIL\n");
+    if (pass && free_state) {
+        std::printf("STAGE B1 COM PREFLIGHT RESULT: PASS (FREE)\n");
+    } else if (pass && busy_state) {
+        std::printf("STAGE B1 COM PREFLIGHT RESULT: PASS (BUSY SAFELY BLOCKED)\n");
+    } else {
+        std::printf("STAGE B1 COM PREFLIGHT RESULT: FAIL\n");
+    }
+
     return pass ? 0 : 8;
 }
