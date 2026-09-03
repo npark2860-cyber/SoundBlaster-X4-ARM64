@@ -56,8 +56,6 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b0@53a1854167447338ca45606b6de2181ae6d8148d`
 
-Registry-free COM class-factory / vtable / unload smoke PASSed.
-
 ## Stage B1 — FREE + BUSY PASS
 
 Validated source:
@@ -72,23 +70,12 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b2-wavert@a6d3201260056a46ae8bce57271132871904d6ee`
 
-### BUSY
+BUSY path cleanly blocks before pin creation.
 
-With Windows playback active:
-
-```text
-init=0
-initMessage=Stage B2 init preflight BUSY: C 0/1 G 1/1; KsCreatePin SKIPPED
-STAGE B2 COM/WAVERT RESULT: PASS (BUSY SAFELY BLOCKED AT INIT)
-```
-
-### FREE
-
-With X4 idle:
+FREE path hardware-confirmed:
 
 ```text
 init=1
-initMessage=Stage B2 init preflight FREE: C 0/1 G 0/1; engine not prepared
 B2 PRE-PIN GATE: C 0/1 G 0/1 busy=NO
 B2 WaveRT BufferAddress=... ActualBufferSize=4096 CallMemoryBarrier=0
 createBuffers=0
@@ -109,49 +96,96 @@ DllCanUnloadNow hr=0x00000000
 STAGE B2 COM/WAVERT RESULT: PASS (FIXED WAVERT LIFECYCLE)
 ```
 
-Hardware/runtime conclusions:
-
-- COM `init()` FREE/BUSY arbitration works.
-- second pre-pin gate remains intact.
-- fixed COM -> `KsCreatePin` -> WaveRT lifecycle works.
-- 20/20 notification sequence is continuous.
-- presentation position is monotonic.
-- STOP/unregister/close/unload are clean.
-
 See:
 
 - `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B2_BUSY_RUNTIME_SUCCESS.md`
 - `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B2_FREE_RUNTIME_SUCCESS.md`
 
-## Immediate next stage — B3A ASIO host buffer/callback ABI only
+## Stage B3A — ASIO host buffer/callback ABI implemented
 
-Create a new branch from the validated B2 source.
+Branch:
 
-B3A must add only the ASIO host-facing buffer/callback layer while preserving the exact B2 hardware lifecycle.
+`exp/windows-arm64-asio-com-stage-b3a-callback-abi`
 
-Required scope:
+Implementation HEAD:
 
-1. define the standard ABI layout needed for `ASIOBufferInfo` and `ASIOCallbacks`
-2. accept exactly two output channels, channel 0 and 1
-3. accept only the fixed 512-frame buffer size
-4. allocate host-side planar 16-bit double buffers for each channel
-5. return those pointers in `ASIOBufferInfo::buffers[0/1]`
-6. during the already-proven 20 WaveRT notifications, invoke `bufferSwitch` exactly 20 times with alternating double-buffer index 0/1
-7. keep `start()` synchronous for this registry-free diagnostic stage; do not add the production callback thread yet
-8. do **not** copy host ASIO samples into the WaveRT DMA buffer yet
-9. hardware WaveRT buffer remains zero after the one pre-RUN zeroing operation
-10. preserve both coexistence gates and all B2 state/cleanup ordering
+`d055c2cbe66090f48d6b02eecd04c6a7eef4fd7f`
 
-The smoke harness should verify:
+B3A starts from the validated B2 source and adds only the host-facing callback layer.
 
-- returned ASIO buffer pointers are non-null and distinct
-- callback count = 20
-- callback indices alternate 0/1 without discontinuity
-- directProcess is false for this diagnostic path
-- B2 packet/presentation-position checks remain clean
-- no hardware-buffer writes are introduced during RUN
+New ABI surface:
 
-This deliberately separates ASIO callback ABI risk from planar-to-interleaved audio-transfer risk.
+- concrete `ASIOBufferInfo`
+- concrete `ASIOCallbacks`
+- ARM64 compile-time layout guards:
+  - `sizeof(ASIOBufferInfo)=24`
+  - `alignof(ASIOBufferInfo)=8`
+  - `sizeof(ASIOCallbacks)=32`
+  - `alignof(ASIOCallbacks)=8`
+
+`createBuffers()` now accepts exactly:
+
+- 2 output channels
+- channel 0 and 1
+- 512 frames
+- non-null `bufferSwitch`
+
+The driver returns four distinct host-side planar signed-16-bit buffers: two channels x two double-buffer indices.
+
+The proven B2 WaveRT loop gained only a notification observer hook. After each notification has already passed packet/presentation-position validation, B3A invokes:
+
+```text
+bufferSwitch(notificationIndex & 1, ASIOFalse)
+```
+
+for 20 alternating callbacks.
+
+Critical isolation rule remains:
+
+- host callback may write host-side ASIO buffers
+- B3A does not copy those samples to WaveRT DMA
+- WaveRT hardware buffer is still zeroed once before RUN
+- hardware-buffer writes during RUN remain zero
+- no callback thread is added yet; `start()` remains synchronous for this diagnostic stage
+
+B2 vs B3A diff confirms the hardware engine change is limited to the observer hook (`wavert_engine.cpp` +12/-2; header +6/-2) plus new B3A host-facing files and CMake target selection.
+
+## Immediate next action — build and run B3A idle smoke
+
+Manual workflow:
+
+`Build ASIO COM Stage B3A Callback ARM64`
+
+Artifact should contain:
+
+- `x4-asio-arm64.dll`
+- `x4-asio-stage-b3a-smoke.exe`
+
+Run idle first.
+
+Expected key result:
+
+```text
+ABI sizeof(ASIOBufferInfo)=24 align=8 sizeof(ASIOCallbacks)=32 align=8
+init=1
+B2 PRE-PIN GATE: C 0/1 G 0/1 busy=NO
+createBuffers=0
+ASIO buffers ... distinctNonNull=YES
+B3A bufferSwitch callback=1 index=0 directProcess=0
+B3A bufferSwitch callback=2 index=1 directProcess=0
+...
+B3A bufferSwitch callback=20 index=1 directProcess=0
+start=0
+startMessage=Stage B3A RUN notifications=20 callbacks=20 callbackIndexErrors=0 hardwareBufferWrites=0
+callbackStats count=20 indexErrors=0 directProcessErrors=0 hostSampleWrites=40 hardwareBufferWrites=0
+stop=0
+disposeBuffers=0
+dispose cleared ASIO buffer pointers=YES
+DllCanUnloadNow hr=0x00000000
+STAGE B3A CALLBACK RESULT: PASS (ASIO CALLBACK ABI, NO DMA COPY)
+```
+
+If Windows playback owns the X4, BUSY must still be accepted only as a clean safe refusal. Never bypass BUSY.
 
 ## Still frozen
 
