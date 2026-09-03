@@ -34,7 +34,8 @@ Keep unchanged for Stage B4C:
 - worker join before KS teardown
 - no callback after joined `stop()` returns
 - B4B logical sample position `0, 512, 1024, ...`
-- QPC-derived monotonic nanosecond timestamp
+
+B4B hardware-proved a monotonic QPC-derived timestamp. Stage B4C changes only the **host-facing ASIO timestamp source** to `timeGetTime()`-derived nanoseconds because the ASIO Windows time-info specification explicitly requires that system reference.
 
 ## Stage B3B — hardware PASS + audible output
 
@@ -109,7 +110,7 @@ Branch:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info`
 
-B4C starts from the exact validated B4B HEAD and changes only the ASIO 2.x time-info callback contract.
+B4C starts from the exact validated B4B HEAD and changes only the ASIO 2.x time-info / host timing contract. The proven WaveRT engine is not modified.
 
 Implemented:
 
@@ -119,10 +120,11 @@ Implemented:
 - if host returns 1 and supplies `bufferSwitchTimeInfo`, callbacks switch from legacy `bufferSwitch()` to `bufferSwitchTimeInfo()`
 - `ASIOTime.timeInfo` carries:
   - B4B logical block-start sample position
-  - B4B QPC-derived nanosecond timestamp
+  - Windows ASIO system reference from `timeGetTime() * 1,000,000` nanoseconds
   - 48000 Hz sample rate
   - speed 1.0
   - system-time/sample-position/sample-rate/speed valid flags
+- `getSamplePosition()` returns the exact same block position/timestamp pair used in `ASIOTime`
 - time code remains invalid/unused
 - legacy `bufferSwitch` remains present only as fallback
 - B4A `wavert_engine_b4a.cpp` remains unchanged
