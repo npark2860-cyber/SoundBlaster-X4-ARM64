@@ -13,8 +13,20 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
+      - name: Checkout ABI baseline source
         uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-asio-sdk-abi-baseline
+
+      - name: Verify checkout and source path
+        shell: pwsh
+        run: |
+          "Checked out commit: $(git rev-parse HEAD)"
+          $source = Join-Path $PWD "src/asio-sdk-abi-baseline"
+          if (-not (Test-Path $source)) {
+            throw "Expected source directory is missing: $source"
+          }
+          Get-ChildItem $source
 
       - name: Configure MSVC ARM64
         shell: pwsh
