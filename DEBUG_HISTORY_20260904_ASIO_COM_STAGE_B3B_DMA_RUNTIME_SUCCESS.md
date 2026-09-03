@@ -28,7 +28,9 @@ Stage B3B starts from the hardware-validated Stage B3A callback ABI source and a
 - both coexistence gates preserved
 - `KSPROPERTY_RTAUDIO_SETWRITEPACKET` deliberately not used
 
-The smoke host generated a low-level 440 Hz stereo test signal at peak sample 1200/32767. The runtime log proves host samples were copied into the mapped WaveRT buffer. Whether the tone was perceptually audible was not explicitly reported with this result and is therefore not treated as a proven fact here.
+The smoke host generated a low-level 440 Hz stereo test signal at peak sample 1200/32767.
+
+The tester explicitly reported that the short test tone was audible through the X4. Therefore B3B now has both structured runtime proof of mapped WaveRT DMA sample transfer and direct perceptual confirmation that the generated PCM reached the device's audible render output.
 
 ## Hardware/runtime result
 
@@ -102,6 +104,7 @@ This proves:
 - copied data was non-zero (`nonzero=20444` sample values across the 20 packets)
 - no callback-index errors were observed
 - no `directProcess` ABI errors were observed
+- the generated 440 Hz PCM was audibly reproduced by the Sound Blaster X4
 
 The normal stop and cleanup path remained intact:
 
@@ -121,11 +124,11 @@ STAGE B3B DMA COPY RESULT: PASS (HOST PCM COPIED TO WAVERT DMA)
 
 ## Conclusion
 
-Stage B3B is hardware/runtime PASS.
+Stage B3B is hardware/runtime PASS with audible output confirmation.
 
 The independent native ARM64 ASIO path now demonstrates, in one controlled registry-free process:
 
-`COM IASIO -> coexistence gates -> KsCreatePin -> WaveRT mapped buffer -> ASIO bufferSwitch -> planar int16 host PCM -> interleaved WaveRT DMA packet -> Microsoft usbaudio2.sys`
+`COM IASIO -> coexistence gates -> KsCreatePin -> WaveRT mapped buffer -> ASIO bufferSwitch -> planar int16 host PCM -> interleaved WaveRT DMA packet -> Microsoft usbaudio2.sys -> audible Sound Blaster X4 render output`
 
 The next missing architectural behavior for a real ASIO host is not sample transport itself. It is asynchronous lifetime behavior: `IASIO::start()` must return while a worker continues waiting for WaveRT notifications and invoking host callbacks until `IASIO::stop()` requests shutdown.
 
