@@ -9,6 +9,7 @@ Updated: 2026-09-04 KST
 3. Creative-equivalent pin-instance coexistence gate
 4. native ARM64 ASIO COM Stage B0 ABI shell
 5. ASIO COM Stage B1 coexistence preflight in both FREE and BUSY states
+6. ASIO COM Stage B2 BUSY refusal after fixed WaveRT engine integration
 
 Do not intentionally reproduce the known green-screen collision.
 
@@ -84,24 +85,84 @@ STAGE B1 COM PREFLIGHT RESULT: PASS (BUSY SAFELY BLOCKED)
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B1_RUNTIME_SUCCESS.md`.
 
-## Immediate next stage — B2 fixed WaveRT lifecycle behind COM
+## Stage B2 fixed WaveRT behind COM — implemented
 
-Create a new branch from the validated B1 source.
+Branch:
 
-B2 is still a registry-free diagnostic stage, not DAW-ready ASIO.
+`exp/windows-arm64-asio-com-stage-b2-wavert`
 
-Change only these runtime behaviors:
+Current validated source HEAD:
 
-1. keep B1 `init()` preflight unchanged
-2. add a fixed internal WaveRT render object
-3. use `createBuffers()` only as a Stage-B2 diagnostic preparation call for the known-good fixed pin/buffer/event geometry
-4. immediately before real `KsCreatePin`, query CINSTANCES and GLOBALCINSTANCES again and fail closed on BUSY/INDETERMINATE
-5. `start()` performs the proven `ACQUIRE -> PAUSE -> RUN` sequence and observes exactly 20 notifications synchronously for the registry-free smoke only
-6. `stop()` performs `RUN -> PAUSE -> ACQUIRE -> STOP`
-7. `disposeBuffers()` unregisters the event and closes event/pin/filter cleanly
-8. no callback thread, DAW callback, or buffer writes during RUN yet
+`a6d3201260056a46ae8bce57271132871904d6ee`
 
-The B2 smoke must be run idle first. Do not deliberately bypass the B1 BUSY gate.
+B2 keeps the B1 `init()` preflight and adds:
+
+- fixed internal WaveRT render engine
+- second CINSTANCES/GLOBALCINSTANCES gate immediately before real `KsCreatePin`
+- fixed 48k / stereo / 16-bit Render Pin 1 format
+- fixed 4096-byte notification buffer
+- notification count 2
+- synchronous 20-notification diagnostic RUN
+- proven WaveRT state ordering and cleanup
+
+B2 remains registry-free and is not yet DAW-ready ASIO. It does not yet provide real ASIO host double-buffer callback delivery.
+
+## Stage B2 BUSY path — hardware PASS
+
+Observed runtime:
+
+```text
+init=0
+initMessage=Stage B2 init preflight BUSY: C 0/1 G 1/1; KsCreatePin SKIPPED
+driverName=Sound Blaster X4 ARM64
+driverVersion=102
+createBuffers/start/stop=SKIPPED because init did not report FREE
+DllCanUnloadNow hr=0x00000000
+STAGE B2 COM/WAVERT RESULT: PASS (BUSY SAFELY BLOCKED AT INIT)
+```
+
+This confirms that integrating the fixed WaveRT engine did not regress the B1 coexistence refusal path.
+
+See:
+
+`DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B2_BUSY_RUNTIME_SUCCESS.md`
+
+## Immediate next action — Stage B2 FREE lifecycle only
+
+Do **not** change code yet.
+
+Stop every X4 playback source and run the same already-built executable:
+
+```bat
+x4-asio-stage-b2-smoke.exe
+```
+
+Required initial state:
+
+```text
+init=1
+```
+
+The smoke may then proceed through:
+
+1. diagnostic `createBuffers()` preparation
+2. second instance gate immediately before real `KsCreatePin`
+3. Render Pin 1 creation
+4. 4096-byte WaveRT buffer acquisition
+5. notification event registration
+6. `ACQUIRE -> PAUSE -> RUN`
+7. exactly 20 notification observations
+8. `RUN -> PAUSE -> ACQUIRE -> STOP`
+9. unregister event
+10. clean pin/filter close and COM unload
+
+Required final result:
+
+```text
+STAGE B2 COM/WAVERT RESULT: PASS (FREE LIFECYCLE)
+```
+
+If `init()` still reports BUSY, do not bypass it. Find/stop the application or system stream holding X4 and rerun later.
 
 ## Still frozen
 
