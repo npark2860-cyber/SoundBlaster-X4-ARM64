@@ -28,6 +28,7 @@ target_link_libraries(x4-asio-arm64 PRIVATE
   uuid.lib
   setupapi.lib
   ksuser.lib
+  winmm.lib
 )
 set_property(TARGET x4-asio-arm64 PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
