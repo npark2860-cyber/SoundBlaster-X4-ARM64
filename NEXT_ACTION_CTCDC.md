@@ -1,107 +1,93 @@
-# NEXT ACTION — CTCDC Hardware Challenge / Session Validation
+# NEXT ACTION — CTCDC Open-Session Validation
 
 Updated: 2026-09-03 KST
 
 ## Current status
 
-Native static analysis **Stage A is complete** for the exact supplied binaries, and the existing safe ARM64 probe audit/fix **Stage B is complete**.
+Native static analysis is complete for the exact supplied `CTCDC.dll` / `CTIntrfu.dll` hashes.
 
-Do not repeat the native trace unless the input DLL hashes change.
+Hardware Stage C1 is also complete.
 
-Full binary trace:
+The physical X4 replied to:
+
+`5A 03 00`
+
+with:
+
+`5A 03 02 3B 00`
+
+Binary-confirmed interpretation:
+
+- command `0x03` = `CTCDCCMD_GetMaximumPayloadSize`
+- payload `3B 00` = `0x003B` = **59 bytes**
+
+This is the successful first branch of `ICTCDC::Open()`.
+
+Therefore, in the currently observed X4 runtime state:
+
+- **do not enter Unlock**
+- **do not send `SW_MODE1`**
+- continue directly to the remaining CTCDC `Open()` queries
+
+Runtime evidence document:
+
+`DEBUG_HISTORY_20260903_CTCDC_MAX_PAYLOAD_RUNTIME.md`
+
+Full native trace:
 
 `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
-Current next step is **Stage C — controlled hardware observation**.
+---
 
-## Fixed binary identities
+## Exact binary identities
 
 ### CTCDC.dll
 
 - size `2,122,200`
 - SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
+- PE32/x86
 
 ### CTIntrfu.dll
 
 - size `109,656`
 - SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
+- PE32/x86
 
-Both supplied binaries are PE32/x86. They are reference inputs for reconstructing an independent ARM64 implementation; they are not ARM64-loadable components.
+These are reference binaries for reconstructing an independent ARM64 implementation.
 
-## Binary-confirmed session state machine
+---
 
-Relevant path is now recovered as:
+## Current hardware-confirmed path
 
-`CTCreateInstanceEx`
-→ `DllGetClassObject`
-→ `IClassFactory::CreateInstance`
-→ `ICTCDC::Initialize`
-→ `ICTCDC::Open`
-→ serial init
+`COM3 open/configure`
 → `5A 03 00` GetMaximumPayloadSize
-→ if unavailable, unlock greeting
-→ challenge parse
-→ AES-256-GCM unlock reply
-→ `unlock_OK\r\n`
-→ `SW_MODE1\r\n`
-→ `5A 03 00` GetMaximumPayloadSize retry
-→ `5A 09 01 02` GetFirmwareVersionString
-→ `5A 26 01 05` QueryButtonsAvailable
-→ normal session
-→ `ICTCDC.ExecuteCommand(1001, ...)`
-→ raw MIDAS bytes
+→ RX `5A 03 02 3B 00`
+→ Maximum Payload Size = 59
+→ skip Unlock
+→ skip `SW_MODE1`
+→ **next: `5A 09 01 02` GetFirmwareVersionString**
+→ **then: `5A 26 01 05` QueryButtonsAvailable**
+→ normal CTCDC session
+→ later `ExecuteCommand(1001)` raw passthrough
 
-Known Direct Mode raw frames remain:
+The known Direct Mode frames remain:
 
 - OFF `5A 39 03 00 05 00`
 - ON `5A 39 03 00 05 01`
 
-`ExecuteCommand(1001)` adds no extra MIDAS wrapper.
+Do not send them yet.
 
-## Important correction
+---
 
-`5A 03 00` is **not** a firmware-version query.
-
-It is:
-
-`CTCDCCMD_GetMaximumPayloadSize`
-
-A valid command-`0x03`, 2-byte response yields the maximum payload size and is used by CTCDC as a session-readiness test.
-
-## Recovered unlock algorithm
-
-Normal challenge layout:
-
-- bytes `0..8`: ASCII `whoareyou`
-- bytes `9..12`: seed4
-- bytes `13..44`: challenge32
-
-Effective AES-256 key:
-
-`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
-
-Normal unlock reply is exactly 72 bytes:
-
-`"unlock" || random16 || ciphertext32 || tag16 || "\r\n"`
-
-- cipher: AES-256-GCM
-- first 12 bytes of `random16`: GCM nonce
-- plaintext input: challenge32
-- AAD: none observed
-- tag: 16 bytes
-- expected success response: `unlock_OK\r\n`
-
-Do not implement a different or guessed challenge transform.
-
-## Existing safe probe
+## Stage C2 — run now
 
 Branch:
 
 `poc/windows-arm64-usb-serial-ctcdc-init`
 
-Current HEAD after Stage B corrections:
+Current branch HEAD after the Stage C2 probe update:
 
-`2125308b869fae21cef3d074de1e7a7a0e250b27`
+`1b95f0734e2a2a26d9bc606809b9e04942d1808a`
 
 Workflow:
 
@@ -111,58 +97,75 @@ Trigger remains manual-only:
 
 `workflow_dispatch`
 
-The Stage B correction changed only probe source/documentation:
+The current build target is `session-open-probe.cpp`.
 
-- `5A 03 00` is now parsed/logged as maximum payload size
-- unrelated DCB flags are preserved instead of forcibly cleared
-- `GetCommTimeouts` is read before zeroing the timeout structure
-- no unlock reply, `SW_MODE1`, or Direct Mode command was added
+It performs only:
 
-The workflow itself was not changed.
+1. CTCDC serial initialization
+2. `5A 03 00` — require a valid Maximum Payload Size response
+3. `5A 09 01 02` — capture/validate `GetFirmwareVersionString`
+4. `5A 26 01 05` — capture/validate `QueryButtonsAvailable`
+5. stop
 
-## Stage C — run now
+It does **not** send:
 
-Manually run the branch workflow and execute the resulting ARM64 probe against the locally USB-connected X4.
+- unlock response
+- `SW_MODE1`
+- Direct Mode
+- unknown/state-changing commands
 
-Capture:
+Run the manually built ARM64 probe and upload:
 
 `x4-ctcdc-probe.txt`
 
-Required observations:
+Required evidence:
 
-1. exact RX bytes after `5A 03 00`
-2. whether a valid maximum-payload response is already returned
-3. if not, whether `whoareyou.MyApp8\r\n` is sent
-4. exact RX bytes from the unlock stage
-5. if the reply begins with `whoareyou`, preserve the full seed/challenge bytes exactly
+- exact RX bytes for `5A 09 01 02`
+- exact RX bytes for `5A 26 01 05`
+- whether both frames match the native CTCDC parser expectations
 
-The current probe intentionally stops before generating/sending the cryptographic unlock reply.
+---
 
-## Stage D — only after Stage C capture
+## After Stage C2 succeeds
 
-Using the hardware challenge plus the already recovered binary algorithm:
+Do not implement the AES unlock path unless a future runtime state actually fails `GetMaximumPayloadSize`.
 
-1. implement the exact 72-byte AES-256-GCM unlock response
-2. log every TX/RX in hex
-3. require exact `unlock_OK\r\n`
-4. send exact `SW_MODE1\r\n`
-5. validate its expected success response
-6. re-run `5A 03 00`
-7. validate `5A 09 01 02`
-8. stop before Direct Mode
+For the currently responsive state, the next controlled step is a dedicated passthrough test that reproduces the already-confirmed `ExecuteCommand(1001)` behavior and sends exactly one Direct Mode frame at a time.
 
-Do not send guessed replies or unknown commands.
+First Direct Mode validation should still require physical X4 state confirmation; successful `WriteFile` alone is not proof.
 
-## Stage E — Direct Mode passthrough
+---
 
-Only after Stage D proves the session state:
+## Unlock path — contingency only
 
-- ON: `5A 39 03 00 05 01`
-- OFF: `5A 39 03 00 05 00`
+The unlock algorithm remains fully recovered for a future state where `5A 03 00` fails.
 
-Send one command at a time and require physical X4 state confirmation.
+Normal challenge:
 
-A successful Windows write is not sufficient validation.
+`whoareyou || seed4 || challenge32`
+
+Effective AES-256 key:
+
+`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
+
+Reply:
+
+`"unlock" || random16 || AES-256-GCM(ciphertext32) || tag16 || "\r\n"`
+
+Expected success:
+
+`unlock_OK\r\n`
+
+Then:
+
+`SW_MODE1\r\n`
+→ `5A 03 00`
+→ `5A 09 01 02`
+→ `5A 26 01 05`
+
+Do not force this path when the initial maximum-payload query already succeeds.
+
+---
 
 ## Do not regress
 
@@ -170,7 +173,7 @@ Do not restart:
 
 - Windows BLE control
 - HID output experiments
-- naked Direct Mode COM writes without session setup
+- naked Direct Mode COM writes without CTCDC session setup
 - UAC Extension Unit search
 - vendor-class interface search
 - `6A` Direct Mode variants
@@ -178,10 +181,10 @@ Do not restart:
 
 ## Documentation discipline
 
-For every new hardware-confirmed step, add a dated GitHub debug-history document before extending the probe further.
+For each new hardware-confirmed step, add a dated debug-history document before extending the probe.
 
 Keep these categories distinct:
 
 - binary-confirmed fact
-- inference
 - hardware-confirmed runtime result
+- inference
