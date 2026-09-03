@@ -283,17 +283,34 @@ int main() {
             const ASIOError stop_hr = driver->stop();
             char stop_error[124]{};
             read_error(driver, stop_error);
+
             const LONG final_callbacks = atomic_read(&g_callback_count);
             const LONG final_index_errors = atomic_read(&g_index_errors);
             const LONG final_direct_errors = atomic_read(&g_direct_process_errors);
             const LONG final_thread_errors = atomic_read(&g_callback_thread_errors);
             const LONG final_host_writes = atomic_read(&g_host_sample_writes);
 
+            // In an asynchronous driver, one or more notifications can complete
+            // between observing the target count and stop() actually signalling
+            // the worker. That is not a failure. The invariant is that stop()
+            // joins the worker and callback count becomes quiescent before it
+            // returns and before WaveRT handles can be torn down.
+            Sleep(50);
+            const LONG callbacks_after_stop_quiescence = atomic_read(&g_callback_count);
+
+            char expected_cb[32]{};
+            char expected_dma_writes[32]{};
+            char expected_dma_frames[32]{};
+            sprintf_s(expected_cb, "cb=%ld", final_callbacks);
+            sprintf_s(expected_dma_writes, "dmaWrites=%ld", final_callbacks);
+            sprintf_s(expected_dma_frames, "dmaFrames=%ld", final_callbacks * kFrames);
+
             std::printf("stop=%ld\n", stop_hr);
             std::printf("stopMessage=%s\n", stop_error);
             std::printf(
-                "callbackStats count=%ld indexErrors=%ld directProcessErrors=%ld threadErrors=%ld hostSampleWrites=%ld\n",
+                "callbackStats count=%ld quiescentAfterStop=%ld indexErrors=%ld directProcessErrors=%ld threadErrors=%ld hostSampleWrites=%ld\n",
                 final_callbacks,
+                callbacks_after_stop_quiescence,
                 final_index_errors,
                 final_direct_errors,
                 final_thread_errors,
@@ -316,19 +333,20 @@ int main() {
                 start_hr == ASE_OK &&
                 start_ms < 150.0 &&
                 callbacks_at_start_return < kTargetCallbacks &&
-                callbacks_before_stop == kTargetCallbacks &&
-                final_callbacks == kTargetCallbacks &&
+                callbacks_before_stop >= kTargetCallbacks &&
+                final_callbacks >= callbacks_before_stop &&
+                callbacks_after_stop_quiescence == final_callbacks &&
                 final_index_errors == 0 &&
                 final_direct_errors == 0 &&
                 final_thread_errors == 0 &&
                 atomic_read(&g_callback_thread_id) != 0 &&
                 atomic_read(&g_callback_thread_id) != g_main_thread_id &&
-                final_host_writes == kTargetCallbacks * kFrames * 2 &&
+                final_host_writes == final_callbacks * kFrames * 2 &&
                 stop_hr == ASE_OK &&
                 contains_text(stop_error, "workerJoined=YES") &&
-                contains_text(stop_error, "notif=20") &&
-                contains_text(stop_error, "dmaWrites=20") &&
-                contains_text(stop_error, "dmaFrames=10240") &&
+                contains_text(stop_error, expected_cb) &&
+                contains_text(stop_error, expected_dma_writes) &&
+                contains_text(stop_error, expected_dma_frames) &&
                 dispose_hr == ASE_OK &&
                 pointers_cleared;
             result_label = pass ? "PASS (ASYNC START/WORKER/STOP LIFETIME)" : "FAIL";
