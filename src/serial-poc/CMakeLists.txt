@@ -6,7 +6,7 @@ if(NOT WIN32)
     message(FATAL_ERROR "This diagnostic targets Windows only.")
 endif()
 
-add_executable(x4-serial-ctcdc-probe main.cpp)
+add_executable(x4-serial-ctcdc-probe session-open-probe.cpp)
 
 target_compile_features(x4-serial-ctcdc-probe PRIVATE cxx_std_17)
 
