@@ -1,0 +1,60 @@
+name: Build X4 ASIO SDK ABI Baseline ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows SDK Native ARM64 ASIO ABI Baseline
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure MSVC ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/asio-sdk-abi-baseline -B build/asio-sdk-abi-baseline -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/asio-sdk-abi-baseline --config Release --parallel
+
+      - name: Verify native ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/asio-sdk-abi-baseline/Release/x4-asio-sdk-abi-baseline.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-asio-sdk-abi-baseline.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected native ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-asio-sdk-abi-baseline.exe
+          Copy-Item src/asio-sdk-abi-baseline/README.md dist/README.md
+          Copy-Item src/asio-sdk-abi-baseline/RUN-ON-X4.cmd dist/RUN-ON-X4.cmd
+          Compress-Archive -Path dist/x4-asio-sdk-abi-baseline.exe,dist/README.md,dist/RUN-ON-X4.cmd -DestinationPath dist/SoundBlaster-X4-ASIO-SDK-ABI-Baseline-ARM64.zip -Force
+
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-SDK-ABI-Baseline-ARM64.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload baseline ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-SDK-ABI-Baseline-ARM64
+          path: dist/SoundBlaster-X4-ASIO-SDK-ABI-Baseline-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
