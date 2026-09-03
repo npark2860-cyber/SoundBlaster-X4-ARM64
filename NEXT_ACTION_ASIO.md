@@ -18,8 +18,6 @@ Do not intentionally reproduce the known green-screen collision.
 
 ## Frozen hardware/streaming baseline
 
-Keep unchanged for the next experiment:
-
 - native Windows ARM64
 - X4 `msft_wave`
 - Render Pin 1
@@ -27,15 +25,11 @@ Keep unchanged for the next experiment:
 - ASIO buffer size 512 frames
 - WaveRT cyclic buffer 4096 bytes
 - NotificationCount=2
-- 2048 bytes / 512 stereo frames per packet
-- coexistence gate at COM `init()`
-- second coexistence gate immediately before every real `KsCreatePin`
-- `writePacket = PacketCount + 1`
-- `slot = writePacket % 2`
-- host callback then planar -> interleaved mapped-buffer copy
-- asynchronous single worker thread
-- `stop()` joins worker before `RUN -> PAUSE -> ACQUIRE -> STOP`
-- unregister notification event before closing handles
+- PacketCount-derived write-ahead slot
+- both coexistence gates
+- B4A single worker thread
+- worker join before KS teardown
+- no callback after joined `stop()` returns
 
 ## Stage B3B — hardware PASS + audible output
 
@@ -43,7 +37,7 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b3b-dma-copy@08ec4db74f6a5fcf49b301991628f458bb6d666e`
 
-The low-level 440 Hz smoke signal was audibly confirmed through the Sound Blaster X4.
+The short low-level 440 Hz test signal was audibly confirmed through the Sound Blaster X4.
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
 
@@ -53,68 +47,96 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b4a-async-worker@996025332bf17341b584095260c1abec93222d84`
 
-Corrected runtime proof:
+Runtime proof:
 
 ```text
-mainThread=15264
 start=0
-startMessage=B4A start OK: workerThreadId=17304; callbacks continue asynchronously
 startDurationMs=4.035 callbacksAtStartReturn=0 returnedBefore20=YES
-B4A worker START thread=17304
-...
 callbacksBeforeStop=20 callbackThread=17304 mainThread=15264
 B4A worker STOP requested thread=17304
 B4A worker EXIT thread=17304
-B4A KSSTATE 2 -> OK
-B4A KSSTATE 1 -> OK
-B4A KSSTATE 0 -> OK
 stop=0
 stopMessage=B4A stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
 callbackStats count=20 quiescentAfterStop=20 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=20480
-disposeBuffers=0
-DllCanUnloadNow hr=0x00000000
 STAGE B4A ASYNC RESULT: PASS (ASYNC START/WORKER/STOP LIFETIME)
 ```
 
-Hardware-proven B4A invariants:
-
-- `start()` returns before callback processing completes
-- callback/DMA work occurs on one worker thread distinct from main
-- B3B PacketCount-derived DMA mapping is preserved
-- worker is joined before KS state teardown
-- no callback occurs after joined `stop()` returns
-- cleanup and COM unload remain clean
-
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_RUNTIME_SUCCESS.md`.
 
-## Immediate next stage — B4B minimum host query contract
+## Stage B4B — minimum host query contract implemented
 
-Create a new branch from exact validated B4A HEAD `996025332bf17341b584095260c1abec93222d84`.
+Branch:
 
-Do not change the proven streaming/lifetime path.
+`exp/windows-arm64-asio-com-stage-b4b-host-query`
 
-Add only the minimum host-facing query contract that real ASIO hosts commonly inspect before/around buffer creation:
+Implementation HEAD at documentation time:
 
-1. concrete 4-byte-packed `ASIOClockSource`, `ASIOChannelInfo`, `ASIOSamples`, and `ASIOTimeStamp` definitions matching the Windows ASIO ABI
-2. `getChannelInfo()` for output channels 0 and 1
-   - output only
-   - channel group 0
-   - sample type `ASIOSTInt16LSB`
-   - deterministic channel names
-   - active flag reflects whether buffers currently exist
-3. `getClockSources()` returns one current internal clock source
-   - index 0
-   - no associated channel/group (`-1/-1`)
-4. `setClockSource(0)` succeeds; any other reference returns `ASE_InvalidParameter`
-5. `getSamplePosition()`
-   - reset logical position to 0 at `start()`
-   - advance exactly 512 frames per successful host callback
-   - return a monotonic block-aligned sample position
-   - return a monotonic timestamp associated with the current logical block
-   - after the engine is not advancing, return `ASE_SPNotAdvancing`
-6. registry-free smoke must validate metadata before streaming and sample-position advancement during the existing B4A worker run
+`84646e7a5b8d7808e72bcf5fde545b78d34ced3c`
 
-This stage is inquiry/metadata only. Do not add `bufferSwitchTimeInfo` negotiation yet; keep the callback transport unchanged so any regression is attributable to the new query contract only.
+B4B changes only host inquiry behavior. The proven B4A WaveRT engine file is reused unchanged.
+
+Implemented:
+
+- native 64-bit `ASIOSamples` / `ASIOTimeStamp`
+- 4-byte-packed `ASIOClockSource` / `ASIOChannelInfo`
+- `getChannelInfo()` for two output channels
+  - `X4 Output L`
+  - `X4 Output R`
+  - group 0
+  - `ASIOSTInt16LSB`
+  - `isActive` follows buffer lifetime
+- one internal clock source, index 0
+- `setClockSource(0)` success / invalid reference rejection
+- `getSamplePosition()`
+  - reset to 0 at start
+  - callback-aligned sequence `0, 512, 1024, ...`
+  - QPC-derived monotonic nanosecond timestamp
+  - `ASE_SPNotAdvancing` outside active streaming
+
+Not added yet:
+
+- `bufferSwitchTimeInfo`
+- ASIO time-info capability negotiation
+- DAW registration
+- MMCSS/AVRT
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4B_HOST_QUERY_IMPLEMENTED.md`.
+
+## Immediate next action — build and run B4B
+
+Manual workflow:
+
+`Build ASIO COM Stage B4B Host Query ARM64`
+
+Trigger: `workflow_dispatch` only.
+
+Run the artifact with normal Windows playback on X4 idle:
+
+```bat
+x4-asio-stage-b4b-smoke.exe
+```
+
+Expected proof points include:
+
+```text
+getChannels=0 inputs=0 outputs=2
+channel0Before hr=0 active=0 group=0 type=16 name=X4 Output L
+channel1Before hr=0 active=0 group=0 type=16 name=X4 Output R
+clock ... index=0 assoc=-1/-1 current=1 name=Internal set0=0 set1=-998
+getSamplePosition before start=-996 expected=-996
+...
+B4B bufferSwitch callback=1 ... samplePosition=0 ...
+B4B bufferSwitch callback=2 ... samplePosition=512 ...
+...
+callbackStats ... positionErrors=0 timestampErrors=0 ...
+getSamplePosition after stop=-996 expected=-996
+channelActiveAfterDispose=0 expected=0
+STAGE B4B HOST QUERY RESULT: PASS (HOST QUERY CONTRACT + B4A ASYNC TRANSPORT)
+```
+
+A legitimate asynchronous stop-boundary overshoot above 20 callbacks remains acceptable if the final counts match and remain quiescent after joined stop.
+
+If Windows playback owns the X4, BUSY is accepted only as a safe refusal. Never bypass BUSY.
 
 ## Still frozen
 
@@ -132,7 +154,7 @@ Do not add yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-After B4B passes, the next logical step is time-info capability negotiation (`bufferSwitchTimeInfo`) and then controlled driver registration / real DAW loading.
+After B4B passes, add time-info capability negotiation as the next isolated variable. Only after that should controlled registration / real DAW loading begin.
 
 ## Architecture
 
