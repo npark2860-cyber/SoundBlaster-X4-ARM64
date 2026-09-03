@@ -1,190 +1,90 @@
-# NEXT ACTION — CTCDC Open-Session Validation
+# NEXT ACTION — Native Windows ARM64 Controller Implementation
 
 Updated: 2026-09-03 KST
 
 ## Current status
 
-Native static analysis is complete for the exact supplied `CTCDC.dll` / `CTIntrfu.dll` hashes.
+Direct Mode protocol/transport discovery is **complete for the currently observed Sound Blaster X4 runtime state**.
 
-Hardware Stage C1 is also complete.
-
-The physical X4 replied to:
-
-`5A 03 00`
-
-with:
-
-`5A 03 02 3B 00`
-
-Binary-confirmed interpretation:
-
-- command `0x03` = `CTCDCCMD_GetMaximumPayloadSize`
-- payload `3B 00` = `0x003B` = **59 bytes**
-
-This is the successful first branch of `ICTCDC::Open()`.
-
-Therefore, in the currently observed X4 runtime state:
-
-- **do not enter Unlock**
-- **do not send `SW_MODE1`**
-- continue directly to the remaining CTCDC `Open()` queries
-
-Runtime evidence document:
-
-`DEBUG_HISTORY_20260903_CTCDC_MAX_PAYLOAD_RUNTIME.md`
-
-Full native trace:
-
-`DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-
----
-
-## Exact binary identities
-
-### CTCDC.dll
-
-- size `2,122,200`
-- SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
-- PE32/x86
-
-### CTIntrfu.dll
-
-- size `109,656`
-- SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
-- PE32/x86
-
-These are reference binaries for reconstructing an independent ARM64 implementation.
-
----
-
-## Current hardware-confirmed path
+Hardware-confirmed Windows path:
 
 `COM3 open/configure`
+→ CTCDC serial init
 → `5A 03 00` GetMaximumPayloadSize
 → RX `5A 03 02 3B 00`
 → Maximum Payload Size = 59
 → skip Unlock
 → skip `SW_MODE1`
-→ **next: `5A 09 01 02` GetFirmwareVersionString**
-→ **then: `5A 26 01 05` QueryButtonsAvailable**
-→ normal CTCDC session
-→ later `ExecuteCommand(1001)` raw passthrough
+→ `5A 09 01 02` GetFirmwareVersionString
+→ firmware `1.7.250324.0910`
+→ `5A 26 01 05` QueryButtonsAvailable
+→ raw MIDAS write
+→ `5A 39 03 00 05 01`
+→ **physical X4 Direct Mode ON confirmed**
 
-The known Direct Mode frames remain:
+Runtime records:
 
-- OFF `5A 39 03 00 05 00`
-- ON `5A 39 03 00 05 01`
+- `DEBUG_HISTORY_20260903_CTCDC_MAX_PAYLOAD_RUNTIME.md`
+- `DEBUG_HISTORY_20260903_CTCDC_OPEN_SESSION_RUNTIME.md`
+- `DEBUG_HISTORY_20260903_DIRECT_MODE_RUNTIME_SUCCESS.md`
 
-Do not send them yet.
+Full native reference trace:
 
----
+- `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
-## Stage C2 — run now
+## Fixed Direct Mode frames
 
-Branch:
+- ON: `5A 39 03 00 05 01`
+- OFF: `5A 39 03 00 05 00`
 
-`poc/windows-arm64-usb-serial-ctcdc-init`
+Do not revive obsolete `6A`, guessed `5C`, HID-prefix, BLE, vendor-interface, or UAC Extension Unit paths.
 
-Current branch HEAD after the Stage C2 probe update:
+## Next engineering phase
 
-`1b95f0734e2a2a26d9bc606809b9e04942d1808a`
+Build the actual independent Windows ARM64 controller rather than another protocol probe.
 
-Workflow:
+Minimum first implementation scope:
 
-`Build X4 CTCDC Serial Probe ARM64`
+1. locate the X4 CDC interface `USB\VID_041E&PID_3278&MI_01`
+2. resolve its COM port
+3. exclusive `CreateFileW` open
+4. reproduce CTCDC serial setup:
+   - event mask `0x05`
+   - 115200 / 8N1
+   - DTR/RTS control bits disabled while preserving unrelated DCB flags
+   - zero COM timeouts
+   - `PurgeComm(0x0F)`
+   - `SETDTR`
+5. establish the known fast-path session:
+   - `5A 03 00`
+   - require valid Maximum Payload Size
+   - `5A 09 01 02`
+   - require firmware response
+   - `5A 26 01 05`
+6. expose Direct Mode ON/OFF using the exact six-byte frames
+7. close cleanly and release COM3
 
-Trigger remains manual-only:
+Do not add unrelated Creative features in this first productization step.
 
-`workflow_dispatch`
+## Contingency unlock support
 
-The current build target is `session-open-probe.cpp`.
+The native AES-256-GCM unlock algorithm is already recovered but is **not required in the currently observed state** because the initial Maximum Payload Size query succeeds.
 
-It performs only:
+Implement it only as a fallback path when a real runtime state fails the initial `5A 03 00` readiness query.
 
-1. CTCDC serial initialization
-2. `5A 03 00` — require a valid Maximum Payload Size response
-3. `5A 09 01 02` — capture/validate `GetFirmwareVersionString`
-4. `5A 26 01 05` — capture/validate `QueryButtonsAvailable`
-5. stop
+Recovered fallback sequence:
 
-It does **not** send:
+`whoareyou.MyApp8\r\n`
+→ parse `whoareyou + seed4 + challenge32`
+→ exact AES-256-GCM unlock response
+→ require `unlock_OK\r\n`
+→ `SW_MODE1\r\n`
+→ retry `5A 03 00`
+→ firmware query
+→ buttons query
 
-- unlock response
-- `SW_MODE1`
-- Direct Mode
-- unknown/state-changing commands
+Do not force this path when the fast path already works.
 
-Run the manually built ARM64 probe and upload:
+## Validation rule
 
-`x4-ctcdc-probe.txt`
-
-Required evidence:
-
-- exact RX bytes for `5A 09 01 02`
-- exact RX bytes for `5A 26 01 05`
-- whether both frames match the native CTCDC parser expectations
-
----
-
-## After Stage C2 succeeds
-
-Do not implement the AES unlock path unless a future runtime state actually fails `GetMaximumPayloadSize`.
-
-For the currently responsive state, the next controlled step is a dedicated passthrough test that reproduces the already-confirmed `ExecuteCommand(1001)` behavior and sends exactly one Direct Mode frame at a time.
-
-First Direct Mode validation should still require physical X4 state confirmation; successful `WriteFile` alone is not proof.
-
----
-
-## Unlock path — contingency only
-
-The unlock algorithm remains fully recovered for a future state where `5A 03 00` fails.
-
-Normal challenge:
-
-`whoareyou || seed4 || challenge32`
-
-Effective AES-256 key:
-
-`seed[0:2] || D3 1A 21 27 9B E3 46 F0 99 9D 6E C4 C3 FE BE 98 90 18 69 C1 18 FB B1 25 6E 0C E0 7B || seed[2:4]`
-
-Reply:
-
-`"unlock" || random16 || AES-256-GCM(ciphertext32) || tag16 || "\r\n"`
-
-Expected success:
-
-`unlock_OK\r\n`
-
-Then:
-
-`SW_MODE1\r\n`
-→ `5A 03 00`
-→ `5A 09 01 02`
-→ `5A 26 01 05`
-
-Do not force this path when the initial maximum-payload query already succeeds.
-
----
-
-## Do not regress
-
-Do not restart:
-
-- Windows BLE control
-- HID output experiments
-- naked Direct Mode COM writes without CTCDC session setup
-- UAC Extension Unit search
-- vendor-class interface search
-- `6A` Direct Mode variants
-- guessed `5C` wrappers
-
-## Documentation discipline
-
-For each new hardware-confirmed step, add a dated debug-history document before extending the probe.
-
-Keep these categories distinct:
-
-- binary-confirmed fact
-- hardware-confirmed runtime result
-- inference
+For every state-changing Creative command added after Direct Mode, require physical X4 confirmation. A successful Windows `WriteFile` alone is not sufficient validation.
