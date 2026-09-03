@@ -17,21 +17,21 @@ Do not intentionally reproduce the known green-screen collision.
 
 ## Frozen hardware/format baseline
 
-Keep unchanged for the next experiment:
+Keep unchanged for Stage B4A:
 
 - native Windows ARM64
 - X4 `msft_wave`
 - Render Pin 1
-- 48 kHz
-- stereo
-- 16-bit PCM / `WAVE_FORMAT_EXTENSIBLE`
-- 4096-byte WaveRT cyclic buffer
-- NotificationCount=2
-- 512 frames / 2048 bytes per WaveRT packet
+- 48 kHz stereo 16-bit PCM
 - ASIO buffer size 512 frames
+- WaveRT cyclic buffer 4096 bytes
+- NotificationCount=2
+- 2048 bytes / 512 stereo frames per packet
 - coexistence gate at COM `init()`
 - second coexistence gate immediately before every real `KsCreatePin`
-- PacketCount-derived write-ahead mapping
+- `writePacket = PacketCount + 1`
+- `slot = writePacket % 2`
+- host `bufferSwitch(slot, ASIOFalse)` then planar -> interleaved mapped-buffer copy
 - `ACQUIRE -> PAUSE -> RUN -> PAUSE -> ACQUIRE -> STOP`
 - unregister notification event before closing handles
 
@@ -41,16 +41,6 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b3a-callback-abi@46c22ef00f85f3668d6851844fa1558d250cedb8`
 
-Confirmed host-side callback ABI:
-
-```text
-callbacks=20
-indexErrors=0
-directProcessErrors=0
-hardwareBufferWrites=0
-STAGE B3A CALLBACK RESULT: PASS (ASIO CALLBACK ABI, NO DMA COPY)
-```
-
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3A_CALLBACK_RUNTIME_SUCCESS.md`.
 
 ## Stage B3B — hardware PASS
@@ -59,26 +49,7 @@ Validated source:
 
 `exp/windows-arm64-asio-com-stage-b3b-dma-copy@08ec4db74f6a5fcf49b301991628f458bb6d666e`
 
-B3B used the same ASIO callback index as the PacketCount-derived safe WaveRT target slot:
-
-```text
-writePacket = PacketCount + 1
-slot = writePacket % 2
-```
-
-Runtime-confirmed beginning:
-
-```text
-packet=1 -> writePacket=2 -> slot=0
-bufferSwitch index=0
-DMA copy slot=0 frames=512 copy=OK
-
-packet=2 -> writePacket=3 -> slot=1
-bufferSwitch index=1
-DMA copy slot=1 frames=512 copy=OK
-```
-
-Final counters:
+Runtime summary:
 
 ```text
 start=0
@@ -90,49 +61,98 @@ DllCanUnloadNow hr=0x00000000
 STAGE B3B DMA COPY RESULT: PASS (HOST PCM COPIED TO WAVERT DMA)
 ```
 
-This proves the native ARM64 path can transfer host ASIO PCM into the X4's mapped WaveRT render buffer while preserving packet/slot synchronization and clean teardown.
+This hardware-proves the independent native ARM64 path can transfer host ASIO PCM into the X4 mapped WaveRT render buffer with clean packet/slot synchronization and teardown.
 
-The smoke was designed to generate a short low-level 440 Hz tone, but perceptual audibility was not explicitly reported with the runtime output. Do not record tone audibility as hardware-proven until the tester explicitly reports it.
+The smoke generated a short low-level 440 Hz test signal, but perceptual audibility has not been explicitly reported and is not recorded as proven.
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
 
-## Immediate next stage — B4A asynchronous start/stop lifetime
+## Stage B4A — asynchronous start/stop worker implemented
 
-The next missing architectural behavior is the ASIO runtime lifetime model.
+Branch:
 
-Current B3B `IASIO::start()` performs the 20-notification loop synchronously and returns only after it finishes. A real ASIO host requires `start()` to return promptly while callbacks continue on a worker until `stop()` requests shutdown.
+`exp/windows-arm64-asio-com-stage-b4a-async-worker`
 
-Create a new branch from the exact validated B3B HEAD.
+Implementation HEAD:
 
-B4A changes only threading/lifetime behavior:
+`4c8e1c4380ae5b682d03b8b12378a85c509f1149`
 
-1. preserve all B3B format, buffer, packet-slot and DMA-copy behavior
-2. `start()` transitions the WaveRT pin to RUN, starts one worker thread and returns `ASE_OK` promptly
-3. the worker waits for WaveRT notifications, reads PacketCount/presentation position, calls host `bufferSwitch`, and performs the same planar -> interleaved DMA packet copy
-4. the registry-free smoke waits until exactly 20 successful callbacks/copies are observed
-5. `stop()` signals worker shutdown, joins it, then performs `RUN -> PAUSE -> ACQUIRE -> STOP`
-6. `disposeBuffers()` must never close event/pin/filter handles until the worker is fully joined
-7. worker failure must be latched and surfaced to the smoke without unsafe handle teardown
-8. preserve both FREE/BUSY coexistence gates
-9. no DAW registration yet
-10. no format expansion yet
+Stage B4A starts from the exact validated B3B HEAD and changes only threading/lifetime behavior.
 
-B4A smoke must prove at minimum:
+### Runtime model
 
-- `start()` returned before callback 20
-- callbacks and DMA writes occur from the worker
-- exactly 20 diagnostic callbacks/copies complete
-- callback indices follow PacketCount-derived slots
-- packet discontinuities = 0
-- presentation position regressions = 0
-- worker joins before pin/event/filter close
-- normal STOP and COM unload remain clean
+`start()` now:
+
+1. creates a stop event
+2. enters `ACQUIRE -> PAUSE -> RUN`
+3. starts one Win32 worker
+4. returns `ASE_OK` without waiting for the callback run to finish
+
+Worker:
+
+- waits on stop event + WaveRT notification event
+- reads PacketCount and presentation position
+- preserves B3B packet/slot mapping
+- invokes host `bufferSwitch`
+- performs the same 512-frame planar -> interleaved WaveRT copy
+
+`stop()`:
+
+1. signals stop event
+2. joins worker
+3. if join fails, hardware teardown is explicitly withheld
+4. only after join succeeds performs `RUN -> PAUSE -> ACQUIRE -> STOP`
+
+`disposeBuffers()` does not close event/pin/filter while a worker remains unjoined.
+
+No MMCSS/AVRT priority is added yet.
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_IMPLEMENTED.md`.
+
+## Immediate next action — build and run B4A idle smoke
+
+Manual workflow:
+
+`Build ASIO COM Stage B4A Async ARM64`
+
+It is `workflow_dispatch` only.
+
+Run artifact executable with X4 normal Windows playback idle:
+
+```bat
+x4-asio-stage-b4a-smoke.exe
+```
+
+Expected proof points:
+
+```text
+start=0
+startMessage=B4A start OK: workerThreadId=...; callbacks continue asynchronously
+startDurationMs=... callbacksAtStartReturn=... returnedBefore20=YES
+B4A worker START thread=...
+...
+callbacksBeforeStop=20 callbackThread=... mainThread=...
+B4A worker STOP requested thread=...
+B4A worker EXIT thread=...
+B4A KSSTATE 2 -> OK
+B4A KSSTATE 1 -> OK
+B4A KSSTATE 0 -> OK
+stop=0
+stopMessage=B4A stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
+callbackStats count=20 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=20480
+disposeBuffers=0
+DllCanUnloadNow hr=0x00000000
+STAGE B4A ASYNC RESULT: PASS (ASYNC START/WORKER/STOP LIFETIME)
+```
+
+If Windows playback owns the X4, BUSY must still be accepted only as a safe refusal. Never bypass BUSY.
 
 ## Still frozen
 
 Do not add yet:
 
 - DAW registration/testing
+- MMCSS/AVRT worker priority
 - capture
 - 24-bit transport
 - multichannel
@@ -142,7 +162,7 @@ Do not add yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-After B4A passes, fill the remaining host-facing ASIO contract needed by real DAWs (`getChannelInfo`, sample-position/time reporting, clock-source behavior, host capability negotiation as required) before registering the driver for DAW testing.
+After B4A passes, complete the remaining host-facing ASIO contract required by real DAWs (`getChannelInfo`, sample-position/time reporting, clock-source behavior and capability negotiation as required) before registration/DAW testing.
 
 ## Architecture
 
