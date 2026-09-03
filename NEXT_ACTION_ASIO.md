@@ -2,21 +2,19 @@
 
 Updated: 2026-09-04 KST
 
-## Current status
-
-The following layers are now independently hardware/runtime confirmed on the Sound Blaster X4:
+## Hardware/runtime-confirmed layers
 
 1. native ARM64 KS/WaveRT one-stream baseline
 2. active-playback collision mechanism
 3. Creative-equivalent pin-instance coexistence gate
 4. native ARM64 ASIO COM Stage B0 ABI shell
-5. Stage B1 COM-integrated BUSY preflight path
+5. ASIO COM Stage B1 coexistence preflight in both FREE and BUSY states
 
 Do not intentionally reproduce the known green-screen collision.
 
-## Fixed render baseline
+## Frozen render baseline
 
-Known-good render shape remains frozen:
+Keep unchanged until later expansion:
 
 - native Windows ARM64
 - X4 `msft_wave`
@@ -26,180 +24,93 @@ Known-good render shape remains frozen:
 - 16-bit PCM / `WAVE_FORMAT_EXTENSIBLE`
 - 4096-byte WaveRT notification buffer
 - notification count = 2
-- 20/20 notifications
-- packet discontinuities = 0
-- presentation-position regressions = 0
-- clean unregister / STOP / close
+- zero buffer once before RUN
+- 20 notifications for registry-free smoke
+- no writes during RUN
+- `ACQUIRE -> PAUSE -> RUN -> PAUSE -> ACQUIRE -> STOP`
+- unregister notification event before closing handles
 
-SDK baseline branch:
+Known-good SDK baseline:
 
-`exp/windows-arm64-asio-sdk-abi-baseline`
+`exp/windows-arm64-asio-sdk-abi-baseline@a02be3c7ffb4dc66c7eb903712a8b4301efe8ea7`
 
-Baseline HEAD:
+## Coexistence rule — hardware confirmed
 
-`a02be3c7ffb4dc66c7eb903712a8b4301efe8ea7`
+Render Pin 1 has one global instance.
 
-## Coexistence gate — hardware confirmed
+- idle: C `0/1`, G `0/1` -> FREE
+- Windows X4 playback active: C `0/1`, G `1/1` -> BUSY
 
-Creative static analysis and ARM64 hardware tests agree on the useful first product rule:
+Product safety rule:
 
-- Render Pin 1 has `PossibleCount=1`
-- idle: `GLOBALCINSTANCES CurrentCount=0` → FREE
-- normal Windows X4 playback active: `GLOBALCINSTANCES CurrentCount=1` → BUSY
-- while BUSY, do not call `KsCreatePin`
+**If either instance query is indeterminate or saturated, do not call `KsCreatePin`.**
 
-The ARM64 gate experiment proved that BUSY can be returned cleanly without triggering the known `usbaudio2` / WDF stale-pipe crash.
+A second gate must run immediately before every real render `KsCreatePin`, not only at COM `init()`.
 
-Validated gate branch HEAD:
+Do not add Creative `TakeExclusiveControl` arbitration yet.
 
-`362d58372b58640ac666dd59f17e532b092c05d3`
+## Stage B0 — PASS
 
-Do not add Creative-style `TakeExclusiveControl` arbitration yet.
+Validated source:
 
-## Stage B0 COM shell — runtime PASS
+`exp/windows-arm64-asio-com-stage-b0@53a1854167447338ca45606b6de2181ae6d8148d`
 
-Branch:
+Registry-free COM class-factory / vtable / unload smoke PASSed.
 
-`exp/windows-arm64-asio-com-stage-b0`
+## Stage B1 — FREE + BUSY PASS
 
-Validated HEAD:
+Validated source:
 
-`53a1854167447338ca45606b6de2181ae6d8148d`
+`exp/windows-arm64-asio-com-stage-b1-preflight@9a27ea1e4092d264d6472c40183cdb61e7ad9e3c`
 
-Runtime smoke result:
+Idle:
 
 ```text
-DllGetClassObject hr=0x00000000
-IClassFactory::CreateInstance hr=0x00000000
 init=1
-driverName=Sound Blaster X4 ARM64
-driverVersion=100
-getChannels=0 inputs=0 outputs=2
-getBufferSize=0 min=512 max=512 preferred=512 granularity=0
-getSampleRate=0 rate=48000.0
-start=-997
-DllCanUnloadNow hr=0x00000000
-STAGE B0 COM SMOKE RESULT: PASS
+preflightState=FREE
+errorMessage=Stage B1 preflight FREE: C 0/1 G 0/1; streaming not connected
+STAGE B1 COM PREFLIGHT RESULT: PASS (FREE)
 ```
 
-See:
-
-`DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B0_RUNTIME_SUCCESS.md`
-
-## Stage B1 — COM-integrated read-only coexistence preflight
-
-Branch:
-
-`exp/windows-arm64-asio-com-stage-b1-preflight`
-
-Implementation HEAD:
-
-`9a27ea1e4092d264d6472c40183cdb61e7ad9e3c`
-
-Stage B1 changes only the COM `init()` ownership preflight path.
-
-On `init()` it:
-
-1. discovers X4 `msft_wave`
-2. opens the KS filter
-3. queries Render Pin 1 `KSPROPERTY_PIN_CINSTANCES`
-4. queries Render Pin 1 `KSPROPERTY_PIN_GLOBALCINSTANCES`
-5. immediately closes the filter
-6. returns `ASIOTrue` only when both queries succeed and neither count is saturated
-7. returns `ASIOFalse` on BUSY or INDETERMINATE
-
-Stage B1 still does **not**:
-
-- call `KsCreatePin`
-- allocate a WaveRT buffer
-- register notification events
-- change KS state
-- write audio
-- connect `createBuffers()` / `start()` to the render engine
-
-`start()` remains `ASE_InvalidMode` when preflight is FREE.
-
-## Stage B1 BUSY path — hardware PASS
-
-With normal Windows playback actively using X4, the registry-free Stage B1 smoke produced:
+Active Windows X4 playback:
 
 ```text
 init=0
 preflightState=BUSY
 errorMessage=Stage B1 preflight BUSY: C 0/1 G 1/1; KsCreatePin SKIPPED
-driverName=Sound Blaster X4 ARM64
-driverVersion=101
-getChannels=0 inputs=0 outputs=2
-getBufferSize=0 min=512 max=512 preferred=512 granularity=0
-getSampleRate=0 rate=48000.0
 start=SKIPPED because init did not report FREE
-DllCanUnloadNow hr=0x00000000
 STAGE B1 COM PREFLIGHT RESULT: PASS (BUSY SAFELY BLOCKED)
 ```
 
-Hardware-established consequences:
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B1_RUNTIME_SUCCESS.md`.
 
-- `GLOBALCINSTANCES` was `1/1`
-- COM `init()` failed cleanly before any render pin creation
-- `KsCreatePin` was skipped
-- the smoke harness did not call `start()`
-- COM lifetime/unload completed cleanly
-- no green-screen / WDF crash occurred
+## Immediate next stage — B2 fixed WaveRT lifecycle behind COM
 
-See:
+Create a new branch from the validated B1 source.
 
-`DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B1_BUSY_RUNTIME_SUCCESS.md`
+B2 is still a registry-free diagnostic stage, not DAW-ready ASIO.
 
-## Immediate next action — Stage B1 FREE path only
+Change only these runtime behaviors:
 
-Do **not** change code yet.
+1. keep B1 `init()` preflight unchanged
+2. add a fixed internal WaveRT render object
+3. use `createBuffers()` only as a Stage-B2 diagnostic preparation call for the known-good fixed pin/buffer/event geometry
+4. immediately before real `KsCreatePin`, query CINSTANCES and GLOBALCINSTANCES again and fail closed on BUSY/INDETERMINATE
+5. `start()` performs the proven `ACQUIRE -> PAUSE -> RUN` sequence and observes exactly 20 notifications synchronously for the registry-free smoke only
+6. `stop()` performs `RUN -> PAUSE -> ACQUIRE -> STOP`
+7. `disposeBuffers()` unregisters the event and closes event/pin/filter cleanly
+8. no callback thread, DAW callback, or buffer writes during RUN yet
 
-Stop all X4 playback, then run the exact same already-built executable once:
+The B2 smoke must be run idle first. Do not deliberately bypass the B1 BUSY gate.
 
-```bat
-x4-asio-stage-b1-smoke.exe
-```
+## Still frozen
 
-Required FREE-path semantics:
+Do not add yet:
 
-```text
-init=1
-preflightState=FREE
-errorMessage=Stage B1 preflight FREE: C 0/1 G 0/1; ...
-start=-997
-DllCanUnloadNow hr=0x00000000
-STAGE B1 COM PREFLIGHT RESULT: PASS (FREE)
-```
-
-The wording after `FREE:` may vary slightly. The important requirements are:
-
-- local/global count both `0/1`
-- `init()` succeeds
-- no `KsCreatePin`
-- no WaveRT
-- `start()` remains disabled with `ASE_InvalidMode`
-- clean COM unload
-
-## After both Stage B1 branches pass — Stage B2
-
-Only then connect the fixed one-stream WaveRT render engine behind the ASIO object.
-
-B2 must change one runtime variable at a time:
-
-1. keep 48 kHz / stereo / 16-bit / Render Pin 1
-2. keep 4096-byte buffer / notification count 2
-3. re-query the coexistence gate immediately before the real `KsCreatePin`
-4. connect only the minimal one-stream engine lifecycle behind the COM object
-5. preserve the proven WaveRT state order and cleanup
-6. return clean BUSY without pin creation whenever capacity is exhausted
-7. keep the first B2 test registry-free; no DAW yet
-
-## Scope still frozen
-
-Do not add or test yet:
-
+- DAW registration/testing
+- real ASIO double-buffer callback delivery
 - capture
-- 24-bit ASIO transport
+- 24-bit transport
 - multichannel
 - sample-rate expansion
 - dynamic buffer-size expansion
@@ -207,14 +118,12 @@ Do not add or test yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-## Architectural rule
-
-Final architecture remains:
+## Architecture
 
 native ARM64 DAW
-→ independent native ARM64 ASIO COM DLL
-→ SetupAPI / `KsCreatePin` / WaveRT
-→ Microsoft `usbaudio2.sys`
-→ Sound Blaster X4
+-> independent native ARM64 ASIO COM DLL
+-> SetupAPI / `KsCreatePin` / WaveRT
+-> Microsoft `usbaudio2.sys`
+-> Sound Blaster X4
 
 Creative binaries remain reference-only and must not be loaded or redistributed as runtime dependencies.
