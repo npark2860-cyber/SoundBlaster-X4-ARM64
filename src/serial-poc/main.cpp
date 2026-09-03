@@ -20,7 +20,7 @@
 namespace
 {
 constexpr wchar_t kTargetHardwareId[] = L"USB\\VID_041E&PID_3278&MI_01";
-constexpr std::array<std::uint8_t, 3> kFirmwareQuery{0x5A, 0x03, 0x00};
+constexpr std::array<std::uint8_t, 3> kMaxPayloadQuery{0x5A, 0x03, 0x00};
 constexpr std::array<std::uint8_t, 18> kUnlockHello{
     'w','h','o','a','r','e','y','o','u','.',
     'M','y','A','p','p','8','\r','\n'};
@@ -209,16 +209,8 @@ bool configure_like_ctcdc(HANDLE handle, Logger& log)
     dcb.ByteSize = 8;
     dcb.Parity = NOPARITY;
     dcb.StopBits = ONESTOPBIT;
-    dcb.fBinary = TRUE;
-    dcb.fParity = FALSE;
-    dcb.fOutxCtsFlow = FALSE;
-    dcb.fOutxDsrFlow = FALSE;
     dcb.fDtrControl = DTR_CONTROL_DISABLE;
-    dcb.fDsrSensitivity = FALSE;
-    dcb.fOutX = FALSE;
-    dcb.fInX = FALSE;
     dcb.fRtsControl = RTS_CONTROL_DISABLE;
-    dcb.fAbortOnError = FALSE;
 
     if (!SetCommState(handle, &dcb))
     {
@@ -227,6 +219,12 @@ bool configure_like_ctcdc(HANDLE handle, Logger& log)
     }
 
     COMMTIMEOUTS timeouts{};
+    if (!GetCommTimeouts(handle, &timeouts))
+    {
+        log.line("GetCommTimeouts failed: " + std::to_string(GetLastError()));
+        return false;
+    }
+    timeouts = {};
     if (!SetCommTimeouts(handle, &timeouts))
     {
         log.line("SetCommTimeouts(all zero) failed: " + std::to_string(GetLastError()));
@@ -245,7 +243,7 @@ bool configure_like_ctcdc(HANDLE handle, Logger& log)
         return false;
     }
 
-    log.line("Applied CTCDC serial init: mask=0x05, 115200/8N1, zero timeouts, purge=0x0F, SETDTR.");
+    log.line("Applied CTCDC serial init: mask=0x05, 115200/8N1, preserved unrelated DCB flags, zero timeouts, purge=0x0F, SETDTR.");
     return true;
 }
 
@@ -312,7 +310,7 @@ std::vector<std::uint8_t> collect_available(HANDLE handle, DWORD totalWaitMs, DW
     return result;
 }
 
-bool find_firmware_response(std::vector<std::uint8_t> const& data, std::uint16_t& version)
+bool find_max_payload_response(std::vector<std::uint8_t> const& data, std::uint16_t& maxPayload)
 {
     for (std::size_t i = 0; i + 3 <= data.size(); ++i)
     {
@@ -323,7 +321,7 @@ bool find_firmware_response(std::vector<std::uint8_t> const& data, std::uint16_t
                 continue;
             if (data[i + 1] == 0x03 && len == 2)
             {
-                version = static_cast<std::uint16_t>(data[i + 3] | (data[i + 4] << 8));
+                maxPayload = static_cast<std::uint16_t>(data[i + 3] | (data[i + 4] << 8));
                 return true;
             }
         }
@@ -334,7 +332,7 @@ bool find_firmware_response(std::vector<std::uint8_t> const& data, std::uint16_t
                 continue;
             if (data[i + 1] == 0x03 && len == 2)
             {
-                version = static_cast<std::uint16_t>(data[i + 4] | (data[i + 5] << 8));
+                maxPayload = static_cast<std::uint16_t>(data[i + 4] | (data[i + 5] << 8));
                 return true;
             }
         }
@@ -387,32 +385,33 @@ int wmain(int argc, wchar_t* argv[])
     else
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (!write_exact(handle, kFirmwareQuery, log, "firmware query"))
+        if (!write_exact(handle, kMaxPayloadQuery, log, "maximum payload size query"))
         {
             result = 30;
         }
         else
         {
             auto response = collect_available(handle, 1500, 120, log);
-            log.line("RX firmware stage bytes=" + std::to_string(response.size()));
+            log.line("RX max-payload stage bytes=" + std::to_string(response.size()));
             if (!response.empty())
             {
                 log.line("RX HEX: " + hex_bytes(response));
                 log.line("RX ASCII: " + ascii_bytes(response));
             }
 
-            std::uint16_t firmware = 0;
-            if (find_firmware_response(response, firmware))
+            std::uint16_t maxPayload = 0;
+            if (find_max_payload_response(response, maxPayload))
             {
                 std::ostringstream text;
-                text << "VALID firmware response found: 0x"
-                     << std::uppercase << std::hex << std::setw(4) << std::setfill('0') << firmware;
+                text << "VALID maximum payload size response: " << std::dec << maxPayload
+                     << " (0x" << std::uppercase << std::hex << std::setw(4)
+                     << std::setfill('0') << maxPayload << ")";
                 log.line(text.str());
-                log.line("CTCDC raw protocol is already responsive after serial initialization; unlock is not required in this state.");
+                log.line("CTCDC would continue Open without entering unlock/SetSwMode1 in this state.");
             }
             else
             {
-                log.line("No valid 5A/5B command-0x03 firmware response. CTCDC would enter its unlock path here.");
+                log.line("No valid 5A/5B command-0x03 maximum-payload response. CTCDC would enter its unlock path here.");
                 PurgeComm(handle, PURGE_RXCLEAR | PURGE_TXCLEAR);
                 if (!write_exact(handle, kUnlockHello, log, "unlock hello"))
                 {
