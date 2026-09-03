@@ -11,7 +11,7 @@ Updated: 2026-09-04 KST
 5. ASIO COM Stage B1 coexistence preflight in FREE and BUSY states
 6. ASIO COM Stage B2 fixed WaveRT lifecycle in FREE and BUSY states
 7. ASIO COM Stage B3A host double-buffer / `bufferSwitch` ABI with zero DMA sample copy
-8. ASIO COM Stage B3B host planar PCM -> interleaved mapped WaveRT DMA transfer
+8. ASIO COM Stage B3B host planar PCM -> interleaved mapped WaveRT DMA transfer with audible X4 output
 
 Do not intentionally reproduce the known green-screen collision.
 
@@ -43,7 +43,7 @@ Validated source:
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3A_CALLBACK_RUNTIME_SUCCESS.md`.
 
-## Stage B3B — hardware PASS
+## Stage B3B — hardware PASS + audible output confirmed
 
 Validated source:
 
@@ -63,7 +63,7 @@ STAGE B3B DMA COPY RESULT: PASS (HOST PCM COPIED TO WAVERT DMA)
 
 This hardware-proves the independent native ARM64 path can transfer host ASIO PCM into the X4 mapped WaveRT render buffer with clean packet/slot synchronization and teardown.
 
-The smoke generated a short low-level 440 Hz test signal, but perceptual audibility has not been explicitly reported and is not recorded as proven.
+The tester explicitly confirmed that the short low-level 440 Hz stereo smoke tone was audible through the Sound Blaster X4. B3B therefore has both structured DMA/packet proof and audible end-to-end render confirmation.
 
 See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
 
