@@ -1,0 +1,70 @@
+name: Build ASIO Global-Instance Gate ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 ASIO Global-Instance Gate
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout gate experiment
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-asio-global-instance-gate
+
+      - name: Verify checkout and source path
+        shell: pwsh
+        run: |
+          "Checked out commit: $(git rev-parse HEAD)"
+          $source = Join-Path $PWD "src/asio-sdk-abi-baseline"
+          if (-not (Test-Path $source)) {
+            throw "Expected source directory is missing: $source"
+          }
+          Get-ChildItem $source
+
+      - name: Configure MSVC ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/asio-sdk-abi-baseline -B build/asio-global-instance-gate -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/asio-global-instance-gate --config Release --parallel
+
+      - name: Verify native ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/asio-global-instance-gate/Release/x4-asio-sdk-abi-baseline.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-asio-sdk-abi-baseline.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected native ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-asio-global-instance-gate.exe
+          Compress-Archive -Path dist/x4-asio-global-instance-gate.exe -DestinationPath dist/SoundBlaster-X4-ASIO-Global-Instance-Gate-ARM64.zip -Force
+
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-Global-Instance-Gate-ARM64.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload gate experiment ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-Global-Instance-Gate-ARM64
+          path: dist/SoundBlaster-X4-ASIO-Global-Instance-Gate-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
