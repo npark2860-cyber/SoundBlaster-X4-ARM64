@@ -20,6 +20,12 @@ enum class X4WaveRtPrepareResult {
     Failed,
 };
 
+enum class X4WaveRtProcessResult {
+    Notification,
+    StopRequested,
+    Failed,
+};
+
 using X4WaveRtNotificationObserver = bool (*)(
     void* context,
     ULONG zero_based_notification_index,
@@ -34,7 +40,9 @@ public:
     X4WaveRtEngine& operator=(const X4WaveRtEngine&) = delete;
 
     X4WaveRtPrepareResult prepare();
-    bool start_and_observe(
+    bool start_run();
+    X4WaveRtProcessResult process_one_notification(
+        HANDLE stop_event,
         X4WaveRtNotificationObserver observer = nullptr,
         void* observer_context = nullptr);
     bool write_interleaved_packet(
@@ -60,6 +68,9 @@ private:
     bool notification_registered_ = false;
     bool prepared_ = false;
     bool entered_run_ = false;
+    ULONG previous_packet_ = 0;
+    UINT64 previous_position_ = 0;
+    bool have_previous_position_ = false;
     X4WaveRtStats stats_{};
-    char last_message_[192] = "Stage B3B WaveRT engine not prepared";
+    char last_message_[192] = "Stage B4A WaveRT engine not prepared";
 };
