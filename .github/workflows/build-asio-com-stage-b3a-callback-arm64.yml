@@ -1,0 +1,79 @@
+name: Build ASIO COM Stage B3A Callback ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 ASIO COM Stage B3A Callback
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout Stage B3A source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-asio-com-stage-b3a-callback-abi
+
+      - name: Verify checkout and source path
+        shell: pwsh
+        run: |
+          "Checked out commit: $(git rev-parse HEAD)"
+          $source = Join-Path $PWD "src/asio-arm64-stage-b0"
+          if (-not (Test-Path $source)) {
+            throw "Expected source directory is missing: $source"
+          }
+          Get-ChildItem $source
+
+      - name: Configure MSVC ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/asio-arm64-stage-b0 -B build/asio-arm64-stage-b3a -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/asio-arm64-stage-b3a --config Release --parallel
+
+      - name: Verify native ARM64 PE files and package
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD "build/asio-arm64-stage-b3a/Release/x4-asio-arm64.dll"
+          $smoke = Join-Path $PWD "build/asio-arm64-stage-b3a/Release/x4-asio-stage-b3a-smoke.exe"
+
+          foreach ($file in @($dll, $smoke)) {
+            if (-not (Test-Path $file)) {
+              throw "Expected output was not produced: $file"
+            }
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Expected native ARM64 PE machine 0xAA64 for {0}, got 0x{1:X4}" -f $file, $machine)
+            }
+            "ARM64 PE verified: $file"
+            "SHA256: $((Get-FileHash $file -Algorithm SHA256).Hash)"
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $dll dist/x4-asio-arm64.dll
+          Copy-Item $smoke dist/x4-asio-stage-b3a-smoke.exe
+          Copy-Item src/asio-arm64-stage-b0/README_B3A.md dist/README.md
+
+          Compress-Archive `
+            -Path dist/x4-asio-arm64.dll,dist/x4-asio-stage-b3a-smoke.exe,dist/README.md `
+            -DestinationPath dist/SoundBlaster-X4-ASIO-COM-Stage-B3A-Callback-ARM64.zip `
+            -Force
+
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-COM-Stage-B3A-Callback-ARM64.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload Stage B3A ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-COM-Stage-B3A-Callback-ARM64
+          path: dist/SoundBlaster-X4-ASIO-COM-Stage-B3A-Callback-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
