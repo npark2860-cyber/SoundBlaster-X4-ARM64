@@ -2,10 +2,14 @@
 
 #include <windows.h>
 #include <unknwn.h>
+#include <cstddef>
 
 using ASIOBool = long;
 using ASIOError = long;
 using ASIOSampleRate = double;
+using ASIOSamples = long long;
+using ASIOTimeStamp = long long;
+using ASIOSampleType = long;
 
 constexpr ASIOBool ASIOFalse = 0;
 constexpr ASIOBool ASIOTrue = 1;
@@ -20,12 +24,39 @@ constexpr ASIOError ASE_SPNotAdvancing = -996;
 constexpr ASIOError ASE_NoClock = -995;
 constexpr ASIOError ASE_NoMemory = -994;
 
-struct ASIOClockSource;
-struct ASIOSamples;
-struct ASIOTimeStamp;
-struct ASIOChannelInfo;
+constexpr ASIOSampleType ASIOSTInt16LSB = 16;
+
+#pragma pack(push, 4)
+struct ASIOClockSource {
+    long index;
+    long associatedChannel;
+    long associatedGroup;
+    ASIOBool isCurrentSource;
+    char name[32];
+};
+
+struct ASIOChannelInfo {
+    long channel;
+    ASIOBool isInput;
+    ASIOBool isActive;
+    long channelGroup;
+    ASIOSampleType type;
+    char name[32];
+};
+#pragma pack(pop)
+
 struct ASIOBufferInfo;
 struct ASIOCallbacks;
+
+#if defined(_M_ARM64) && !defined(_M_ARM64EC)
+static_assert(sizeof(long) == 4, "Windows ASIO ABI requires 32-bit long");
+static_assert(sizeof(ASIOSamples) == 8, "Windows ASIO sample counter must be 64-bit");
+static_assert(sizeof(ASIOTimeStamp) == 8, "Windows ASIO timestamp must be 64-bit");
+static_assert(sizeof(ASIOClockSource) == 48, "Unexpected ASIOClockSource ABI size");
+static_assert(alignof(ASIOClockSource) == 4, "ASIOClockSource must use 4-byte packing");
+static_assert(sizeof(ASIOChannelInfo) == 52, "Unexpected ASIOChannelInfo ABI size");
+static_assert(alignof(ASIOChannelInfo) == 4, "ASIOChannelInfo must use 4-byte packing");
+#endif
 
 // Minimal ABI-compatible ASIO interface declaration used by this independent
 // ARM64 implementation. On Windows, ASIO hosts instantiate the COM class and
