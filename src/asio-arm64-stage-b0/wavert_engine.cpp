@@ -16,7 +16,7 @@
 #include "wavert_engine.h"
 
 #if !defined(_M_ARM64) || defined(_M_ARM64EC)
-#error Stage B2 WaveRT engine must be built for native Windows ARM64, not ARM64EC.
+#error Stage B3A WaveRT engine must be built for native Windows ARM64, not ARM64EC.
 #endif
 
 namespace {
@@ -420,7 +420,10 @@ X4WaveRtPrepareResult X4WaveRtEngine::prepare() {
     return X4WaveRtPrepareResult::Ready;
 }
 
-bool X4WaveRtEngine::start_and_observe() {
+bool X4WaveRtEngine::start_and_observe(
+    X4WaveRtNotificationObserver observer,
+    void* observer_context) {
+
     if (!prepared_ || pin_ == INVALID_HANDLE_VALUE || !event_) {
         strcpy_s(last_message_, "Stage B2 start FAILED: engine not prepared");
         return false;
@@ -500,6 +503,13 @@ bool X4WaveRtEngine::start_and_observe() {
             packet_count,
             static_cast<unsigned long long>(position.u64PositionInBlocks),
             static_cast<unsigned long long>(position.u64QPCPosition));
+
+        // Stage B3A adds only a host-facing observer after the B2 notification
+        // has already passed packet/position validation. The observer is not
+        // given the WaveRT buffer and cannot write hardware DMA memory.
+        if (observer) {
+            observer(observer_context, i);
+        }
     }
 
     if (stats_.packet_discontinuities != 0 || stats_.position_regressions != 0) {
