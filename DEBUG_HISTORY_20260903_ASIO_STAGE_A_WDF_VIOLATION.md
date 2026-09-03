@@ -6,13 +6,98 @@ Updated: 2026-09-03 KST
 
 **Quarantined. Do not rerun the current Stage A native executable.**
 
-The user reported that running the first native ARM64 Stage A ASIO engine caused Windows to reboot with a green-screen bug check identified as `WDF_VIOLATION`, remembered as `0x10D`.
+The first native ARM64 Stage A ASIO engine caused a kernel bug check on first hardware execution. The uploaded minidump now confirms the exact failure and materially narrows the fault path.
 
-Microsoft defines bug check `0x10D WDF_VIOLATION` as a Kernel-Mode Driver Framework (KMDF) detected error in a framework-based kernel driver.
+## Crash dump identity
 
-This is materially different from an ordinary user-mode crash.
+Uploaded archive:
 
-## Important contrast
+`090326-18031-01.zip`
+
+Contained dump:
+
+`090326-18031-01.dmp`
+
+Dump size:
+
+`3,504,636 bytes`
+
+SHA-256:
+
+`d56f467d4b08cf498a8a7b360024c73079e0c9d950cfe73885c03da2ab62e429`
+
+The dump is a Windows ARM64 kernel triage dump (`MachineImageType = 0xAA64`).
+
+The active process path preserved in the dump contains:
+
+`C:\SB\x4-asio-engine-stage-a.exe`
+
+## Exact bug check
+
+Bug check:
+
+`0x10D WDF_VIOLATION`
+
+Parameters:
+
+- Arg1 = `0x5`
+- Arg2 = `0x000019748551C768`
+- Arg3 = `0x1200`
+- Arg4 = `0xFFFFE68B5DD31890`
+
+Microsoft defines `WDF_VIOLATION / Arg1 = 0x5` as:
+
+> A framework object handle of the incorrect type was passed to a framework object method.
+
+Arg2 is the handle value that was passed. Microsoft documents Arg3 as reserved for this bug-check subtype, so do not assign an undocumented semantic meaning to `0x1200` without additional symbol evidence.
+
+This is not an ordinary user-mode crash. KMDF deliberately bug-checked because a framework-based kernel driver called a WDF method with a framework object handle of the wrong type.
+
+## Reconstructed ARM64 crash stack
+
+The triage dump contains the ARM64 CONTEXT, call-stack storage, 311 loaded-driver records, and module base/size information. Frame-pointer walking from the saved ARM64 context yields the following module chain.
+
+Current PC:
+
+- `ntoskrnl.exe + 0x25ACEC`
+
+Return chain:
+
+1. `ntoskrnl.exe + 0x25B6B4`
+2. `Wdf01000.sys + 0x6ED2C`
+3. `Wdf01000.sys + 0x1200C`
+4. `usbaudio2.sys + 0x7FC4`
+5. `usbaudio2.sys + 0x12374`
+6. `usbaudio2.sys + 0x139C0`
+7. `usbaudio2.sys + 0x12084`
+8. `usbaudio2.sys + 0x3E044`
+9. `Wdf01000.sys + 0x1B224`
+10. `Wdf01000.sys + 0x1B3F0`
+11. `ntoskrnl.exe + 0x24B054`
+12. `ntoskrnl.exe + 0x376450`
+13. `ntoskrnl.exe + 0x2F1174`
+14. `ntoskrnl.exe + 0x62D654`
+
+Relevant loaded module ranges from the dump:
+
+- `Wdf01000.sys`: base `0xFFFFF80134E00000`, size `0xD7000`
+- `ks.sys`: base `0xFFFFF8013C150000`, size `0x82000`
+- `portcls.sys`: base `0xFFFFF8013C990000`, size `0x6E000`
+- `usbaudio2.sys`: base `0xFFFFF8013D320000`, size `0x5F000`
+
+## What the stack proves
+
+The WDF validator is the component that detects and reports the invalid framework-object type; `Wdf01000.sys` itself should not be labeled the defective driver merely because it issues the bug check.
+
+The framework-driver call path immediately below the WDF validation frames is **`usbaudio2.sys`**. Multiple consecutive `usbaudio2.sys` frames are preserved before control returns through WDF and the kernel.
+
+Therefore the dump provides strong direct evidence for this narrower statement:
+
+> The Stage A request sequence reached a Microsoft `usbaudio2.sys` KMDF path in which a WDF method received a framework object handle of the wrong type, and WDF terminated the system with `0x10D/5`.
+
+This does **not** yet prove whether the root cause is solely an internal `usbaudio2.sys` defect or whether the native user-mode client supplied an unusual/invalid request sequence that exposed insufficient validation or a lifetime bug inside `usbaudio2.sys`.
+
+## Important contrast — WaveRT feasibility remains valid
 
 The immediately preceding PowerShell/C# active WaveRT probe succeeded on the same physical X4 and Windows ARM64 system with:
 
@@ -30,44 +115,74 @@ The immediately preceding PowerShell/C# active WaveRT probe succeeded on the sam
 - notification event unregister
 - clean pin close
 
-Therefore this crash does **not** overturn the prior hardware feasibility result. It indicates a defect or unsafe behavioral difference in the first native Stage A implementation and/or an exposed driver bug triggered by that difference.
+Therefore the crash does **not** overturn the prior hardware feasibility result. It isolates a failure in the widened native Stage A execution pattern and/or a driver bug triggered by that pattern.
 
-## Native Stage A differences that must be isolated
+## ABI checks completed after the crash
 
-The first native implementation expanded several variables at once compared with the hardware-proven C# probe:
+The critical handwritten native definitions were compared with the documented Windows KS/WaveRT layouts:
 
-1. switched implementation language/ABI from managed P/Invoke to freestanding native C++ ARM64
-2. changed from one stream lifecycle to three complete reopen/run/close cycles
-3. changed from 20 notifications to 64 notifications per run
-4. began writing the logical half-buffer on every notification instead of filling silence once before RUN
-5. continuously queried packet count and presentation position during the longer run
-6. exercised rapid unregister/close/reopen lifecycle repeatedly
+- `KSRTAUDIO_BUFFER_PROPERTY_WITH_NOTIFICATION`: expected 64-bit size 40 bytes — native Stage A used 40
+- `KSRTAUDIO_BUFFER`: pointer + ULONG + BOOL, expected 64-bit size 16 bytes — native Stage A used 16
+- notification event property: `KSPROPERTY + HANDLE`, expected 64-bit size 32 bytes — native Stage A used 32
+- `KSAUDIO_PRESENTATION_POSITION`: two 64-bit fields, expected size 16 bytes — native Stage A used 16
+- WaveRT property IDs 5/6/7/9/10 match `BUFFER_WITH_NOTIFICATION`, register event, unregister event, packet count, and presentation position
 
-This violated the project's variable-isolation discipline. Do not repeat that expansion.
+A simple obvious size mismatch in these particular structures is therefore less likely than initially suspected, but handwritten ABI remains unnecessary risk and must be removed from the next native test.
 
-## Current hypotheses — not yet proven
+## Native Stage A differences that remain to isolate
 
-Priority order for investigation:
+Compared with the hardware-proven C# probe, the failed native Stage A simultaneously changed:
 
-1. native ABI / structure layout / DeviceIoControl buffer-direction mismatch not caught by the static asserts
-2. lifecycle race caused by rapid pin teardown and reopen
-3. buffer-write protocol mismatch on notification-driven WaveRT render (for example a packet/write-commit requirement not exercised by the read-only C# probe)
-4. kernel driver defect exposed by the longer/repeated native sequence
+1. managed P/Invoke -> freestanding handwritten native ARM64 ABI
+2. one stream lifecycle -> three complete reopen/run/close cycles
+3. 20 notifications -> 64 notifications per run
+4. silence initialized once before RUN -> half-buffer writes after every notification while RUNNING
+5. a substantially longer sequence of packet/presentation queries
+6. rapid unregister/close/reopen lifecycle
 
-Do not claim a specific root cause until the partial Stage A log and/or crash dump identifies the failing phase.
+The dump proves the kernel failure is in a `usbaudio2.sys` -> WDF object path, but it does not identify which of these widened behaviors triggers the invalid internal object lifetime/type.
+
+## Current root-cause ranking — not yet final
+
+1. **usbaudio2 internal lifetime/state bug exposed by the widened stream lifecycle**, especially teardown/reopen or a longer uncommon direct-WaveRT sequence
+2. **native semantic/request mismatch** that the driver does not safely reject and which leads to internal WDF object misuse
+3. repeated 64-notification query sequence exposing a delayed driver state/lifetime bug
+4. per-notification direct DMA-buffer writes; still remove for parity, although the write itself does not call a WDF API and therefore maps less directly to the observed wrong-handle bug check
+5. gross ABI structure-size error in the checked WaveRT structs — now lower probability after layout verification
+
+Do not select one as final root cause until a controlled parity run or surviving Stage A runtime log identifies the exact phase.
 
 ## Immediate next action
 
-Do not produce another active RUN executable yet.
+Do not proceed to ASIO COM Stage B and do not reuse the quarantined Stage A executable.
 
-First:
+The next native test must be a strict parity reproduction of the successful C# active probe:
 
-- inspect any surviving `x4-asio-engine-stage-a.txt`
-- inspect Windows minidump if available
-- identify bug-check parameters and faulting module with `!analyze -v`
-- compare the native C++ request ABI and ordering against the exact successful C# active probe
+- use official Windows SDK/WDK headers, not handwritten KS/WaveRT ABI definitions
+- one X4 `msft_wave` open only
+- Render Pin 1 only
+- 48 kHz / stereo / 16-bit PCM
+- 4096-byte buffer, notification count 2
+- fill the entire cyclic buffer with silence once before RUN
+- no DMA-buffer writes while RUNNING
+- 20 notifications only
+- packet count + presentation position only as in the successful managed probe
+- one `PAUSE -> ACQUIRE -> STOP`
+- one unregister and close
+- no reopen in the same process
+- flush a log before and after every active KS/WaveRT call boundary
 
-Then rebuild a minimal native parity probe with **one variable changed at a time**, starting with a single run and the same 20-notification behavior as the successful C# probe.
+If that exact native parity test is safe, add only one variable per later run:
+
+A. extend 20 -> 64 notifications, still one lifecycle and no buffer writes
+
+B. add per-notification half-buffer writes, still one lifecycle
+
+C. add a second lifecycle only after the single-lifecycle cases are stable
+
+D. add a third lifecycle last
+
+A surviving `x4-asio-engine-stage-a.txt` from the crashed run remains useful because it can reveal which phase was reached immediately before the bug check, but the minidump already establishes the `usbaudio2.sys`/WDF failure path.
 
 ## Architectural conclusion retained
 
