@@ -15,6 +15,8 @@ enum class X4WaveRtPrepareResult {
     Failed,
 };
 
+using X4WaveRtNotificationObserver = void (*)(void* context, ULONG zero_based_notification_index);
+
 class X4WaveRtEngine {
 public:
     X4WaveRtEngine() = default;
@@ -24,7 +26,9 @@ public:
     X4WaveRtEngine& operator=(const X4WaveRtEngine&) = delete;
 
     X4WaveRtPrepareResult prepare();
-    bool start_and_observe();
+    bool start_and_observe(
+        X4WaveRtNotificationObserver observer = nullptr,
+        void* observer_context = nullptr);
     bool stop();
     void dispose();
 
@@ -41,5 +45,5 @@ private:
     bool prepared_ = false;
     bool entered_run_ = false;
     X4WaveRtStats stats_{};
-    char last_message_[192] = "Stage B2 WaveRT engine not prepared";
+    char last_message_[192] = "Stage B3A WaveRT engine not prepared";
 };
