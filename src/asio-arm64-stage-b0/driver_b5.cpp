@@ -11,6 +11,7 @@
 
 #include "asio_callback_compat.h"
 #include "b5_identity.h"
+#include "control_panel_b5.h"
 #include "preflight.h"
 #include "wavert_engine_b5.h"
 
@@ -99,7 +100,7 @@ public:
     }
 
     ASIOBool init(void* sysHandle) override {
-        (void)sysHandle;
+        owner_window_ = reinterpret_cast<HWND>(sysHandle);
 
         if (worker_thread_ || render_.running() || capture_.running()) {
             const ASIOError result = stop();
@@ -306,7 +307,7 @@ public:
         const bool rate_192 = sample_rate_ == 192000.0;
         *minSize = rate_192 ? kMinBufferFrames192 : kMinBufferFrames;
         *maxSize = kMaxBufferFrames;
-        *preferredSize = rate_192 ? kPreferredBufferFrames192 : kPreferredBufferFrames;
+        *preferredSize = b5_load_preferred_buffer_frames(sample_rate_);
         *granularity = kBufferGranularity;
         return ASE_OK;
     }
@@ -533,7 +534,28 @@ public:
         return ASE_OK;
     }
 
-    ASIOError controlPanel() override { return ASE_NotPresent; }
+    ASIOError controlPanel() override {
+        if (InterlockedCompareExchange(&control_panel_open_, 1, 0) != 0) {
+            return ASE_InvalidMode;
+        }
+
+        B5ControlPanelState state{};
+        state.sample_rate = sample_rate_;
+        state.active_buffer_frames = buffers_created_ ? buffer_frames_ : 0;
+        state.buffers_created = buffers_created_;
+        state.worker_running = worker_thread_ != nullptr;
+        strcpy_s(state.last_status, last_error_);
+
+        HWND owner = owner_window_ && IsWindow(owner_window_) ? owner_window_ : nullptr;
+        const bool shown = b5_show_control_panel(g_module, owner, state);
+        InterlockedExchange(&control_panel_open_, 0);
+
+        if (!shown) {
+            strcpy_s(last_error_, "B5 control panel could not be created");
+            return ASE_HWMalfunction;
+        }
+        return ASE_OK;
+    }
 
     ASIOError future(long selector, void* opt) override {
         (void)opt;
@@ -710,6 +732,8 @@ private:
     long host_time_info_support_ = 0;
     ASIOSampleRate sample_rate_ = 48000.0;
     long buffer_frames_ = kPreferredBufferFrames;
+    HWND owner_window_ = nullptr;
+    volatile LONG control_panel_open_ = 0;
 
     X4WaveRtEngineB5 render_{};
     X4WaveRtEngineB5 capture_{};

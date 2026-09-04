@@ -89,6 +89,7 @@ set_property(TARGET x4-asio-stage-b5-192k-geometry-probe PROPERTY MSVC_RUNTIME_L
 # B5 productized side-by-side ARM64EC driver. Validated B4D sources above remain untouched.
 add_library(x4-asio-arm64ec-b5 SHARED
   driver_b5_arm64ec.cpp
+  control_panel_b5.cpp
   preflight_b4d_arm64ec.cpp
   wavert_engine_b5_arm64ec.cpp
   driver_b5.def
@@ -105,6 +106,8 @@ target_link_libraries(x4-asio-arm64ec-b5 PRIVATE
   ksuser.lib
   winmm.lib
   avrt.lib
+  user32.lib
+  gdi32.lib
 )
 set_property(TARGET x4-asio-arm64ec-b5 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
