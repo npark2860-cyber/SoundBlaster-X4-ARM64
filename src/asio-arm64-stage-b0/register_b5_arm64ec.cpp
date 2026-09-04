@@ -55,10 +55,14 @@ bool verify_registered(const wchar_t* expected_dll) {
     wchar_t asio_clsid[128]{};
     wchar_t description[256]{};
     const bool ok =
-        read_reg_sz(HKEY_LOCAL_MACHINE, inproc_key, nullptr, inproc_path, _countof(inproc_path)) &&
-        read_reg_sz(HKEY_LOCAL_MACHINE, inproc_key, L"ThreadingModel", threading, _countof(threading)) &&
-        read_reg_sz(HKEY_LOCAL_MACHINE, asio_key, L"CLSID", asio_clsid, _countof(asio_clsid)) &&
-        read_reg_sz(HKEY_LOCAL_MACHINE, asio_key, L"Description", description, _countof(description)) &&
+        read_reg_sz(HKEY_LOCAL_MACHINE, inproc_key, nullptr, inproc_path,
+                    static_cast<DWORD>(sizeof(inproc_path) / sizeof(inproc_path[0]))) &&
+        read_reg_sz(HKEY_LOCAL_MACHINE, inproc_key, L"ThreadingModel", threading,
+                    static_cast<DWORD>(sizeof(threading) / sizeof(threading[0]))) &&
+        read_reg_sz(HKEY_LOCAL_MACHINE, asio_key, L"CLSID", asio_clsid,
+                    static_cast<DWORD>(sizeof(asio_clsid) / sizeof(asio_clsid[0]))) &&
+        read_reg_sz(HKEY_LOCAL_MACHINE, asio_key, L"Description", description,
+                    static_cast<DWORD>(sizeof(description) / sizeof(description[0]))) &&
         _wcsicmp(inproc_path, expected_dll) == 0 &&
         _wcsicmp(threading, L"Apartment") == 0 &&
         _wcsicmp(asio_clsid, kX4AsioB5ClsidString) == 0;
