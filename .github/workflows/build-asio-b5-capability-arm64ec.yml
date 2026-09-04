@@ -13,9 +13,10 @@ jobs:
 
     steps:
       - name: Checkout B5 capability source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: exp/windows-arm64-asio-b5-capability-productization
+          fetch-depth: 0
 
       - name: Verify checkout and frozen parent ancestry
         shell: pwsh
