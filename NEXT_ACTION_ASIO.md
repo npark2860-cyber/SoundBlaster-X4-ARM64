@@ -24,103 +24,125 @@ Do not alter or re-prove B4D unless B5 exposes a concrete regression.
 
 ---
 
-# B5 productization state
+# Current B5 source
 
-Current B5 branch:
+`exp/windows-arm64-asio-b5-capability-productization@1d6c3a6f3229b0d4d7b18009073fc878621bedae`
 
-`exp/windows-arm64-asio-b5-capability-productization@7223257c0e86ea9c0a64b90f61968d00496011ab`
+B5 first-release contract remains:
 
-Implemented contract:
-
-- 2 outputs, `Int24LSB`
-- 2 inputs at 48/96 kHz, `Int24LSB`
-- output at 48/96/192 kHz
-- 192 kHz reports zero inputs
-- buffers 96..4800, granularity 48, preferred 240
+- 2 output channels, Int24LSB
+- 2 input channels at 48/96 kHz, Int24LSB
+- output 48/96/192 kHz
+- 192 kHz reports zero input channels
+- buffer 96..4800 / granularity 48 / preferred 240
 - 512 compatibility exception
 - Internal Clock
 - ASIO 2.x time-info
 - Render Pin 1 + Capture Pin 4 WaveRT
-- full-duplex capture-before-render start ordering
-- joined worker lifecycle
-- render/capture local+global BUSY gates before `KsCreatePin`
-- shared functional B5 source for Classic ARM64 and ARM64EC
-
-Validation identity remains side-by-side:
-
-`Sound Blaster X4 ARM64 ASIO B5`
+- strict local/global BUSY gates before every pin creation
+- joined worker before hardware teardown
 
 ---
 
-# Latest runtime report
+# Latest runtime evidence
 
-`B5_PRODUCT_VALIDATION_REPORT.txt` generated 2026-09-04 11:24:32 proved:
+Product report generated 2026-09-04 11:29:00 advanced B5 substantially.
 
-- B5 registration PASS
-- registry verify PASS
-- initial KS property-only gate `C 0/1 G 0/1`, BUSY=NO
-- B5 COM creation PASS
-- B5 public ASIO capability PASS
-- 2 in / 2 out
-- Int24LSB type 17
-- buffers 96..4800 / preferred 240 / granularity 48
-- 48/96/192 kHz only
-- Internal Clock
-- latency 240/240
-- time-info supported
+### PASS — 48 kHz / 240 output-only
 
-The actual lifecycle matrix then stopped on its first `init()` because Render Pin 1 had changed to:
+Three cycles:
 
-- `C 0/1`
-- `G 1/1`
-- BUSY
+- callbacks=140 / 139 / 142
+- clean `ASE_OK` stop
+- workerJoined=YES
+- no render packet discontinuity
+- no callback index error
+- no copy error
 
-and B5 correctly skipped `KsCreatePin`.
+### PASS — 48 kHz / 240 full duplex
 
-This is a safety block, not a transport crash.
+Two cycles:
 
-The capability probe does not call `createBuffers()`, `start()`, or `KsCreatePin`; therefore the report does not identify the capability probe as the owner. The supported interpretation is an external pin-ownership race between separate validation processes.
+- cycle 1: callbacks=139, renderNotif=140, captureNotif=139, outFrames=33360, inFrames=33360
+- cycle 2: callbacks=138, renderNotif=139, captureNotif=138, outFrames=33120, inFrames=33120
+- both clean `ASE_OK` stop
+
+This proves the duplex lifecycle/copy path survives at 48 kHz. `inputNonzeroSamples=0` does not yet prove real external input signal content.
+
+### FAIL — 96 kHz / 240 full duplex
+
+The first cycle ran 259 callbacks, then strict stop diagnostics reported:
+
+- worker=0
+- idx=20
+- outCopy=0
+- inCopy=0
+- rPkt=20
+- rPos=0
+- cPkt=0
+
+Render PACKETCOUNT skipped absolute packets while capture stayed sequential. Because callback buffer parity is derived from the render packet, each +2 render jump also repeated the same host buffer index.
+
+This is a realtime scheduling failure at the 2.5 ms period, not BUSY, `KsCreatePin`, KS state, copy, capture-packet or position-regression failure.
+
+The report stopped at this case; 192 kHz/min/max/512 cases remain pending.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_RUNTIME_48K_PASS_96K_SCHEDULING_FIX.md`
 
 ---
 
-# Script correction already committed
+# High-rate scheduling fix now implemented
 
-`install_and_validate_b5.cmd` now runs in this order:
+ARM64EC and Classic ARM64 B5 adapters now run the shared worker using Windows MMCSS:
 
-1. register/verify;
-2. immutable property-only idle gate;
-3. **product lifecycle matrix immediately**;
-4. post-matrix capability report.
+- `Pro Audio` task
+- `AVRT_PRIORITY_CRITICAL`
+- `THREAD_PRIORITY_HIGHEST` fallback only if MMCSS task registration fails
+- proper MMCSS revert at worker exit
+- `avrt.lib` linked only to B5 targets
 
-Matrix exit code 10 is now classified as BUSY_BLOCKED rather than generic FAIL, and one property-only KS snapshot is recorded after the block.
+The B5 static-CRT trace stream now uses a 2 MiB full buffer initialized before driver logging and flushes only after the worker exits. This preserves detailed packet diagnostics while removing trace file I/O from the realtime loop.
 
-No ownership gate was weakened.
+No diagnostic was relaxed. The next report still fails if it sees any render/capture packet discontinuity, callback-index repetition or copy error.
+
+BUSY safety remains immutable.
 
 ---
 
-# Immediate action — no rebuild required for this attempt
+# Immediate action
 
-Use the already-downloaded validation package.
+The DLL changed, so **do not reuse the previous validation ZIP**.
 
-Do not run the old `install_and_validate_b5.cmd` again for this attempt, because that old copy performs the capability process before the matrix.
+Run manual workflow:
 
-With REAPER/media players/Creative App and other X4 playback closed, and preferably with Windows default playback moved away from X4, run the existing:
+`Build ASIO B5 Productization`
 
-`x4-asio-stage-b5-product-validation.exe`
+The workflow must check out:
 
-**once directly** from that package.
+`1d6c3a6f3229b0d4d7b18009073fc878621bedae`
 
-Redirect its output to a text file and return the file.
+If the build fails, fix the exact compiler/linker issue on this same B5 branch; do not request a hardware micro-test.
 
-The executable itself still enforces the Render Pin 1 `init()` BUSY gate before any `KsCreatePin`, so this does not weaken safety.
+After Actions PASS:
 
-If the direct matrix immediately reports `G 1/1` again, do not repeatedly retry. Implement ownership diagnostics next.
+1. download the new `SoundBlaster-X4-ASIO-B5-Productization.zip`;
+2. close other X4 playback and move Windows default output away if necessary;
+3. run the new `install_and_validate_b5.cmd` once;
+4. return `B5_PRODUCT_VALIDATION_REPORT.txt`.
 
-If the matrix passes, the next and final B5 first-release validation is one REAPER test covering audible output + stereo input together.
+The full strict matrix must now reach and pass:
+
+- 48k/240 output x3
+- 48k/240 full duplex x2
+- 96k/240 full duplex x2
+- 192k/240 output x2
+- 48k/96 output x1
+- 48k/4800 output x1
+- 48k/512 compatibility output x1
+
+Only after the full matrix passes should the final REAPER test cover actual audible 24-bit output plus real stereo input together.
 
 ## Immutable safety
 
