@@ -55,7 +55,7 @@ jobs:
         shell: pwsh
         run: cmake --build build/asio-b5-arm64 --config Release --target x4-asio-arm64-b5 --parallel
 
-      - name: Verify PE architectures and B5 mux worker marker
+      - name: Verify PE architectures and B5 runtime markers
         shell: pwsh
         run: |
           $ec = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll"
@@ -87,12 +87,15 @@ jobs:
             if ($ascii -notmatch "dual-event-mux-v3") {
               throw "B5 DLL missing dual-event-mux-v3 runtime marker: $f"
             }
+            if ($ascii -notmatch "runtime-failsafe-v1") {
+              throw "B5 DLL missing runtime-failsafe-v1 marker: $f"
+            }
           }
 
           "ARM64EC verified: $ec"
           "Classic ARM64 verified: $classic"
           "ARM64EC 192k geometry probe verified: $geometry"
-          "B5 mux v3 runtime marker verified in both DLLs"
+          "B5 mux-v3 + runtime-failsafe-v1 markers verified in both DLLs"
 
       - name: Package B5 validation bundle
         shell: pwsh
