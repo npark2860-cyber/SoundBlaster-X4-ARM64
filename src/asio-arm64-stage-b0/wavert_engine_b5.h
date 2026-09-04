@@ -22,6 +22,7 @@ enum class X4WaveRtB5PrepareResult {
 
 enum class X4WaveRtB5ProcessResult {
     Notification,
+    NoData,
     StopRequested,
     Failed,
 };
@@ -56,11 +57,22 @@ public:
 
     X4WaveRtB5PrepareResult prepare(const X4WaveRtB5Config& config);
     bool start_run();
+
     X4WaveRtB5ProcessResult process_one_notification(
         HANDLE stop_event,
         DWORD timeout_ms,
         X4WaveRtB5NotificationObserver observer = nullptr,
         void* observer_context = nullptr);
+
+    // B5 high-rate worker API: the caller has already observed this engine's
+    // notification_event() as signaled. No additional wait occurs here.
+    // Capture ERROR_NOT_READY is reported as NoData, not as a hard failure.
+    X4WaveRtB5ProcessResult process_signaled_notification(
+        ULONG* packet_number,
+        BOOL* more_data,
+        X4WaveRtB5NotificationObserver observer = nullptr,
+        void* observer_context = nullptr,
+        bool trace_notification = false);
 
     bool write_render_packet24(
         ULONG absolute_packet_number,
