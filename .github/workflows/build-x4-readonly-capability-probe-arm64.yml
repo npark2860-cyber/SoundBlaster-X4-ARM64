@@ -13,8 +13,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
+      - name: Checkout native-controller source
         uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-native-controller
 
       - name: Configure ARM64
         shell: pwsh
@@ -24,38 +26,40 @@ jobs:
       - name: Build Release
         shell: pwsh
         run: |
-          cmake --build build/x4-control-readonly-probe --config Release --parallel
+          cmake --build build/x4-control-readonly-probe --config Release --target x4-control-readonly-probe --parallel
+          cmake --build build/x4-control-readonly-probe --config Release --target x4-mixer-readonly-drilldown --parallel
 
-      - name: Verify ARM64 PE and package
+      - name: Verify ARM64 PE and stage
         shell: pwsh
         run: |
-          $cap = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
-          $challenge = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-ctcdc-challenge-capture.exe"
-          foreach ($exe in @($cap, $challenge)) {
-            if (-not (Test-Path $exe)) { throw "Missing executable: $exe" }
+          $capabilityExe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
+          $mixerExe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-mixer-readonly-drilldown.exe"
+
+          foreach ($exe in @($capabilityExe, $mixerExe)) {
+            if (-not (Test-Path $exe)) {
+              throw "$exe was not produced"
+            }
             $bytes = [System.IO.File]::ReadAllBytes($exe)
             $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
             $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
             if ($machine -ne 0xAA64) {
               throw ("Expected ARM64 PE machine 0xAA64 for {0}, got 0x{1:X4}" -f $exe, $machine)
             }
+            "ARM64 PE verified: $exe"
+            "SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $cap dist/x4-control-readonly-probe.exe
-          Copy-Item $challenge dist/x4-ctcdc-challenge-capture.exe
+          Copy-Item $capabilityExe dist/x4-control-readonly-probe.exe
+          Copy-Item $mixerExe dist/x4-mixer-readonly-drilldown.exe
+          Copy-Item src/x4-control-readonly-probe/RUN-READONLY-CAPABILITY-PROBE.cmd dist/RUN-READONLY-CAPABILITY-PROBE.cmd
+          Copy-Item src/x4-control-readonly-probe/RUN-MIXER-READONLY-DRILLDOWN.cmd dist/RUN-MIXER-READONLY-DRILLDOWN.cmd
           Copy-Item src/x4-control-readonly-probe/README.md dist/README.md
-          Compress-Archive -Path dist/x4-control-readonly-probe.exe,dist/x4-ctcdc-challenge-capture.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Force
 
-          "ARM64 PE verified: both executables are 0xAA64"
-          "Capability EXE SHA256: $((Get-FileHash $cap -Algorithm SHA256).Hash)"
-          "Challenge EXE SHA256: $((Get-FileHash $challenge -Algorithm SHA256).Hash)"
-          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Algorithm SHA256).Hash)"
-
-      - name: Upload probe ZIP
+      - name: Upload probe artifact
         uses: actions/upload-artifact@v4
         with:
           name: SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64
-          path: dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
