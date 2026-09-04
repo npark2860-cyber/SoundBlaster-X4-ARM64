@@ -16,14 +16,14 @@ The 2026-09-04 B5 capability capture established the following Creative `SB USB 
 - X4 Render Pin 1: stereo/6ch/8ch, 16/24-bit, 48/96/192 kHz
 - X4 Capture Pin 4: stereo, 16/24-bit, 48/96 kHz
 
-A later direct WaveRT geometry probe measured an additional constraint on the Windows `msft_wave` path at 192 kHz / stereo / 24-bit / `NotificationCount=2`:
+A direct WaveRT geometry probe measured an additional allocation constraint on the Windows `msft_wave` path at 192 kHz / stereo / 24-bit / `NotificationCount=2`:
 
 - 48..336 frames per notification: rejected with `Win32=87`
 - 384 frames per notification (2.0 ms): first accepted geometry
 - every tested 432..960 frame candidate: accepted
 - accepted candidates returned `ActualBufferSize == RequestedBufferSize`
 
-Therefore the first-release B5 ASIO contract intentionally differs from Creative's public 240-frame preferred value at 192 kHz in order to preserve the simple and already-validated 1:1 ASIO-buffer-to-WaveRT-packet model.
+A later strict RUN validation observed a render PACKETCOUNT skip at 192 kHz / 384 frames. Therefore 384 is proven allocation-valid but is not yet proven sustained-cadence stable. Do not treat the current 384-frame public contract as final until the RUN cadence probe below returns.
 
 B5 intentionally remains narrow:
 
@@ -33,7 +33,7 @@ B5 intentionally remains narrow:
 - output: 48/96/192 kHz
 - input: 48/96 kHz; at 192 kHz `getChannels()` reports zero inputs
 - 48/96 kHz ASIO buffer contract: min 96, max 4800, preferred 240, granularity 48 frames
-- 192 kHz ASIO buffer contract: min 384, max 4800, preferred 384, granularity 48 frames
+- current 192 kHz ASIO buffer contract: min 384, max 4800, preferred 384, granularity 48 frames
 - 512 frames is also accepted as an undocumented compatibility exception for existing B4D-era host settings
 
 Broad multichannel output is still deferred.
@@ -49,6 +49,8 @@ The B5 validation driver uses a different CLSID and ASIO registry entry:
 `Sound Blaster X4 ARM64 ASIO B5`
 
 The existing proven B4D entry remains untouched.
+
+Packet discontinuity, render position regression, callback-index repetition, render/capture copy failure and joined-worker shutdown checks remain strict. Do not weaken them merely to make validation pass.
 
 ## Runtime worker failure fail-safe
 
@@ -72,13 +74,25 @@ The record contains rate, frames, callback/index/copy counters, render/capture p
 
 File/debug logging happens only after the emergency silence attempt so filesystem latency cannot prolong a repeating last-buffer tone.
 
+The first captured real fatal record proved `emergencySilence=OK` on a 192 kHz render PACKETCOUNT discontinuity.
+
+## Exact packet discontinuity diagnostics
+
+The signaled WaveRT path records a non-sequential packet as:
+
+`previous=<n> expected=<n+1> current=<m> delta=<m-n>`
+
+Render position regression diagnostics similarly record previous/current positions.
+
+The strict failure behavior is unchanged; this only improves diagnosis.
+
 ## Full-duplex timing
 
 Mux v3 keeps Render as the ASIO callback/master clock while Capture runs as an independent producer. Capture packets are staged and the oldest available staged packet is supplied to the current ASIO input buffer. A short render/capture phase difference no longer causes an immediate false synchronization failure, while real packet discontinuity, copy failure, staging failure, sustained capture starvation, callback-index repetition, render-position regression, and worker failure remain fatal.
 
 For input-only operation, capture notifications drive the ASIO callback directly.
 
-## One-shot validation
+## One-shot product validation
 
 Run `install_and_validate_b5.cmd` with REAPER/other X4 playback closed and the Windows default output moved away from X4 if necessary.
 
@@ -91,12 +105,14 @@ The script:
    - 48 kHz / 240 frames / output, 3 reopen cycles
    - 48 kHz / 240 frames / full duplex, 2 cycles
    - 96 kHz / 240 frames / full duplex, 2 cycles
-   - 192 kHz / 384 frames / output, 2 cycles
    - 48 kHz / 480 frames / output for 5 seconds (matches the observed REAPER host buffer)
+   - 192 kHz / 384 frames / output, 2 cycles
    - 48 kHz / 96 frames / output
    - 48 kHz / 4800 frames / output
    - 48 kHz / 512 frames / compatibility output
 5. captures the B5 public ASIO contract after lifecycle PASS.
+
+The REAPER-matched 48k/480 case is intentionally before the current 192 kHz case so a later 192 kHz failure cannot hide that host geometry result.
 
 Output:
 
@@ -104,6 +120,33 @@ Output:
 
 If the first idle gate is BUSY or indeterminate, the script stops before lifecycle work. Do not bypass it.
 
-After the bundled validation passes, REAPER should show both the existing B4D entry and `Sound Blaster X4 ARM64 ASIO B5` for real playback/input validation.
+## Dedicated 192 kHz RUN cadence probe
+
+The current 192 kHz allocation minimum is 384 frames / 2.0 ms, but one strict runtime cycle observed a packet transition consistent with `332 -> 334`. Use the cadence probe before changing the public contract.
+
+Run:
+
+`probe_b5_192k_cadence.cmd`
+
+This invokes:
+
+`x4-asio-stage-b5-product-validation.exe --cadence-192`
+
+Candidates:
+
+- 384 frames = 2.000 ms, 1 x 5 seconds
+- 432 frames = 2.250 ms, 2 x 10 seconds
+- 480 frames = 2.500 ms, 2 x 10 seconds
+- 576 frames = 3.000 ms, 2 x 10 seconds
+
+The normal fatal packet-discontinuity checks remain enabled for every candidate. A safely joined candidate failure does not prevent later candidates from being measured; BUSY still aborts the probe.
+
+Output:
+
+`B5_192K_CADENCE_REPORT.txt`
+
+Choose any future 192 kHz minimum/preferred change only from the first sustained stable candidate measured by this probe. If larger candidates also fail, diagnose notification scheduling rather than blindly raising the buffer.
+
+After the bundled validation and cadence issue are resolved, REAPER should show both the existing B4D entry and `Sound Blaster X4 ARM64 ASIO B5` for real playback/input validation.
 
 If real playback fails again, do not repeatedly retry. Immediately collect `%TEMP%\B5_RUNTIME_FAILURE.txt` and use that record as the next source of truth.
