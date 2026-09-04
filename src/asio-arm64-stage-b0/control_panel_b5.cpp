@@ -399,7 +399,7 @@ INT_PTR CALLBACK panel_proc(HWND dialog, UINT message, WPARAM w_param, LPARAM l_
         y += scale_px(dpi, 27);
 
         wchar_t version_line[96]{};
-        swprintf_s(version_line, _countof(version_line), L"Driver 2.00  •  %ls", architecture_name());
+        swprintf_s(version_line, _countof(version_line), L"Driver 2.00  |  %ls", architecture_name());
         make_control(dialog, L"STATIC", version_line, SS_LEFT,
                      margin, y, content_width, scale_px(dpi, 20), 0, context->font);
         y += scale_px(dpi, 28);
