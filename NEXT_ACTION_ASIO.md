@@ -14,7 +14,8 @@ Updated: 2026-09-04 KST
 8. Stage B3B host PCM -> mapped WaveRT DMA with audible X4 output
 9. Stage B4A asynchronous worker / joined stop lifetime
 10. Stage B4B host query contract: channels, clock, block-aligned sample position/timestamp
-11. Stage B4C ASIO 2.x time-info negotiation and `bufferSwitchTimeInfo` transport — first hardware run functionally succeeded; original smoke had a coarse-timer false FAIL
+11. Stage B4C ASIO 2.x time-info negotiation and `bufferSwitchTimeInfo` transport — FREE-path functionally proven; original smoke false-failed on coarse timer equality
+12. corrected B4C smoke BUSY safety path — hardware PASS; final corrected FREE-path confirmation still pending
 
 Do not intentionally reproduce the known green-screen collision.
 
@@ -93,9 +94,7 @@ Implemented:
 - time code remains invalid/unused
 - `wavert_engine_b4a.cpp` remains unchanged
 
-### First B4C hardware run
-
-The original smoke printed FAIL, but only because it incorrectly required `systemTime` to strictly increase on every 512-frame callback.
+### First B4C hardware run — FREE path, original smoke false FAIL
 
 Observed:
 
@@ -112,9 +111,7 @@ DllCanUnloadNow hr=0x00000000
 STAGE B4C TIME INFO RESULT: FAIL
 ```
 
-All ASIO2 negotiation, callback mode, sample-position, consistency, DMA, worker lifetime and cleanup invariants succeeded. `timestampErrors=6` came from repeated adjacent `timeGetTime()` ticks.
-
-ASIO Windows `systemTime` is derived from `timeGetTime()`. Its default timer resolution can be around 15.6 ms, while the frozen 512/48k block period is about 10.67 ms. Therefore adjacent callbacks may legitimately receive equal timestamps.
+All ASIO2 negotiation, callback mode, sample-position, consistency, DMA, worker lifetime and cleanup invariants succeeded. `timestampErrors=6` came only from repeated adjacent `timeGetTime()` ticks.
 
 Correct smoke invariant:
 
@@ -147,24 +144,46 @@ Hashes:
 - smoke SHA256 `70177DA7DDF7A30E14EC816A23FC4A8C4B62FB1DF6EE9F8B09CD593ACE7230D7`
 - distribution ZIP SHA256 `5F69C848DFA80C906DBA311221FF8943E56A54AEBA5725FD0BF92737A857FEFB`
 
+## Corrected B4C smoke hardware run — BUSY safety PASS
+
+The corrected executable was run, but normal Windows playback already owned the X4 global render instance.
+
+Observed:
+
+```text
+Sound Blaster X4 ARM64 ASIO Stage B4C ASIO2 time-info smoke (coarse-timer corrected)
+init=0
+initMessage=B4C init BUSY: C 0/1 G 1/1; KsCreatePin SKIPPED
+driverVersion=107
+DllCanUnloadNow hr=0x00000000
+STAGE B4C TIME INFO RESULT: PASS (BUSY SAFELY BLOCKED AT INIT)
+```
+
+This proves the corrected artifact preserves the coexistence gate and safely refuses while Windows playback owns the single global render instance. It does not yet exercise the corrected timestamp assertion because no second WaveRT stream was created.
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_CORRECTED_SMOKE_BUSY_RUNTIME.md`.
+
 ## Immediate next action
 
-Run the corrected registry-free artifact with normal Windows X4 playback idle:
+Close/stop all normal Windows playback using X4 and verify the global instance returns to FREE (`G 0/1`). Then run the same corrected registry-free executable again:
 
 ```bat
 x4-asio-stage-b4c-smoke.exe
 ```
 
-Expected corrected proof includes:
+Required final corrected FREE-path proof:
 
 ```text
+init=1
+initMessage=B4C init FREE: C 0/1 G 0/1; ...
+...
 callbackStats ... timestampErrors=0 consistencyErrors=0 timestampAdvanced=YES ...
 STAGE B4C TIME INFO RESULT: PASS (ASIO2 TIME-INFO CALLBACK + B4B TRANSPORT)
 ```
 
 A legitimate asynchronous stop-boundary overshoot above 20 callbacks remains acceptable if final counts match and stay quiescent after joined stop.
 
-If Windows playback owns X4, BUSY remains a safe refusal. Never bypass BUSY.
+Never bypass BUSY.
 
 ## Still frozen
 
@@ -182,7 +201,7 @@ Do not add yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-After corrected B4C hardware PASS, the next controlled milestone is ASIO registration and the first real REAPER load/playback test at 48 kHz / 16-bit / stereo / 512 frames.
+After corrected B4C FREE-path hardware PASS, the next controlled milestone is ASIO registration and the first real REAPER load/playback test at 48 kHz / 16-bit / stereo / 512 frames.
 
 ## Architecture
 
