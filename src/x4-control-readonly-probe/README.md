@@ -1,20 +1,19 @@
 # Sound Blaster X4 ARM64 Read-Only Capability Probe
 
-This package contains two ARM64 diagnostics for SB1815/X4 control analysis.
+This package contains ARM64 diagnostics for SB1815/X4 control analysis.
 
-## 1. CTCDC challenge capture
+## Confirmed runtime prerequisite
 
-Run `x4-ctcdc-challenge-capture.exe` first when the normal `5A 03 00` readiness query returns no response.
+Hardware testing on 2026-09-04 established a reproducible conflict condition:
 
-It reproduces the validated CTCDC COM setup, sends `5A 03 00`, and only if that fails sends the exact CTCDC greeting:
+- Creative App running: the independent CTCDC probe can fail to receive the initial `5A 03 00` response.
+- Creative App closed: the same probe/session can immediately return the valid maximum-payload response and continue normally.
 
-`whoareyou.MyApp8\r\n`
+For independent CTCDC validation, fully close Creative App before running these tools. This is treated as an observed runtime ownership/session-conflict condition; the protocol bytes are not changed to work around it.
 
-It records the device reply to `X4_CTCDC_CHALLENGE_REPORT.txt` and stops. It does **not** generate/send the cryptographic unlock reply, does not send `SW_MODE1`, and does not send any feature SET command.
+## 1. Capability probe
 
-## 2. Capability probe
-
-`x4-control-readonly-probe.exe` maps the current SB1815/X4 control state after a valid CTCDC session is already available.
+`x4-control-readonly-probe.exe` maps the current SB1815/X4 control state using GET/query operations only.
 
 It sends GET/query operations only for:
 
@@ -27,11 +26,22 @@ It sends GET/query operations only for:
 
 The executable contains no Direct Mode setter, no Malcolm SET command (`0x12`), no Graphic EQ SET operation, no Sound Mode SET operation, and no raw-command command-line interface.
 
-## Run
+### Easy run
 
-1. Close Creative App or anything else that currently owns the X4 CDC COM port.
-2. Run `x4-ctcdc-challenge-capture.exe` normally. It auto-detects `USB\\VID_041E&PID_3278&MI_01`.
-3. If needed, pass the port explicitly: `x4-ctcdc-challenge-capture.exe COM3`.
-4. Upload `X4_CTCDC_CHALLENGE_REPORT.txt`.
+1. Fully close Creative App.
+2. Double-click `RUN-READONLY-CAPABILITY-PROBE.cmd`.
+3. Upload `X4_READONLY_CAPABILITY_REPORT.txt`.
 
-Do not run the capability probe again until the current CTCDC session state is understood from the challenge report.
+The probe auto-detects `USB\\VID_041E&PID_3278&MI_01`; no COM-port argument is normally required.
+
+## 2. CTCDC challenge capture
+
+`x4-ctcdc-challenge-capture.exe` is retained as a diagnostic fallback only if the normal `5A 03 00` readiness query still returns no response while Creative App is confirmed closed.
+
+It reproduces the validated CTCDC COM setup, sends `5A 03 00`, and only if that fails sends the exact CTCDC greeting:
+
+`whoareyou.MyApp8\r\n`
+
+It records the device reply to `X4_CTCDC_CHALLENGE_REPORT.txt` and stops. It does **not** generate/send the cryptographic unlock reply, does not send `SW_MODE1`, and does not send any feature SET command.
+
+Do not change Direct Mode, Malcolm SET, EQ SET, Sound Mode SET, or other X4 feature state while using the read-only capability probe.
