@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cwchar>
+#include <iterator>
 
 #include "../asio-arm64-stage-b0/b5_identity.h"
 
@@ -155,15 +156,15 @@ bool verify_registered(const wchar_t* expected_forwarder) {
 
     const bool values_ok =
         read_registry_string(HKEY_LOCAL_MACHINE, clsid_key, nullptr,
-                             clsid_description, _countof(clsid_description)) &&
+                             clsid_description, static_cast<DWORD>(std::size(clsid_description))) &&
         read_registry_string(HKEY_LOCAL_MACHINE, inproc_key, nullptr,
-                             inproc_path, _countof(inproc_path)) &&
+                             inproc_path, static_cast<DWORD>(std::size(inproc_path))) &&
         read_registry_string(HKEY_LOCAL_MACHINE, inproc_key, L"ThreadingModel",
-                             threading_model, _countof(threading_model)) &&
+                             threading_model, static_cast<DWORD>(std::size(threading_model))) &&
         read_registry_string(HKEY_LOCAL_MACHINE, asio_key, L"CLSID",
-                             asio_clsid, _countof(asio_clsid)) &&
+                             asio_clsid, static_cast<DWORD>(std::size(asio_clsid))) &&
         read_registry_string(HKEY_LOCAL_MACHINE, asio_key, L"Description",
-                             asio_description, _countof(asio_description));
+                             asio_description, static_cast<DWORD>(std::size(asio_description)));
 
     const bool content_ok = values_ok &&
         _wcsicmp(clsid_description, kX4AsioB5Description) == 0 &&
