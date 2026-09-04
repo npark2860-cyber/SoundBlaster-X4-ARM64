@@ -12,6 +12,8 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
     void* observer_context,
     bool trace_notification) {
 
+    static constexpr char kPacketStatsSemantics[] = "packet-stats-observed-v1";
+
     if (packet_number_out) *packet_number_out = 0;
     if (more_data_out) *more_data_out = FALSE;
 
@@ -136,12 +138,12 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
         const char* dir =
             config_.direction == X4WaveRtB5Direction::Render ? "RENDER" : "CAPTURE";
         std::printf(
-            "B5 %s notification=%lu packet=%lu slot=%lu position=%llu qpc=%llu moreData=%d thread=%lu\n",
+            "B5 %s notification=%lu packet=%lu slot=%lu position=%llu qpc=%llu moreData=%d packetStats=%s thread=%lu\n",
             dir, stats_.notifications, packet_number,
             packet_number % config_.notification_count,
             static_cast<unsigned long long>(position_blocks),
             static_cast<unsigned long long>(qpc),
-            more_data ? 1 : 0, GetCurrentThreadId());
+            more_data ? 1 : 0, kPacketStatsSemantics, GetCurrentThreadId());
     }
 
     if (observer && !observer(observer_context, notification_index, packet_number)) {
