@@ -94,7 +94,18 @@ public:
     bool running() const { return entered_run_; }
     HANDLE notification_event() const { return event_; }
     const X4WaveRtB5Config& config() const { return config_; }
-    const X4WaveRtB5Stats& stats() const { return stats_; }
+
+    // Externally, last_packet means the last hardware packet observed from
+    // PACKETCOUNT/GETREADPACKET. Render write-ahead copies target packet N+1 and
+    // update the internal write statistics, but must not make callers believe
+    // that N+1 has already completed. This distinction is required by mux-v4's
+    // notification-coalescing detector.
+    X4WaveRtB5Stats stats() const {
+        X4WaveRtB5Stats snapshot = stats_;
+        if (have_previous_packet_) snapshot.last_packet = previous_packet_;
+        return snapshot;
+    }
+
     const char* last_message() const { return last_message_; }
 
 private:
