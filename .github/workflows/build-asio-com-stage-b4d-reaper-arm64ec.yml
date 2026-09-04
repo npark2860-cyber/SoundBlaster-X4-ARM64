@@ -1,0 +1,105 @@
+name: Build ASIO COM Stage B4D REAPER ARM64EC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64EC ASIO COM Stage B4D REAPER
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout Stage B4D source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-asio-com-stage-b4d-reaper-registration
+
+      - name: Verify checkout and source path
+        shell: pwsh
+        run: |
+          "Checked out commit: $(git rev-parse HEAD)"
+          $source = Join-Path $PWD "src/asio-arm64-stage-b0"
+          if (-not (Test-Path $source)) {
+            throw "Expected source directory is missing: $source"
+          }
+          Get-ChildItem $source
+
+      - name: Configure MSVC ARM64EC
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b0 -B build/asio-arm64-stage-b4d -G "Visual Studio 17 2022" -A ARM64EC
+
+      - name: Build Release
+        shell: pwsh
+        run: cmake --build build/asio-arm64-stage-b4d --config Release --parallel
+
+      - name: Verify ARM64EC ARM64X images and package
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-arm64ec.dll"
+          $smoke = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-stage-b4d-smoke.exe"
+          $register = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-stage-b4d-register.exe"
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          if (-not $vs) { throw "Visual Studio installation path not found" }
+          $link = Get-ChildItem -Path (Join-Path $vs "VC/Tools/MSVC/*/bin/Hostx64/x64/link.exe") |
+            Sort-Object FullName | Select-Object -Last 1
+          if (-not $link) { throw "link.exe not found for ARM64X header verification" }
+          "Header verifier: $($link.FullName)"
+
+          foreach ($file in @($dll, $smoke, $register)) {
+            if (-not (Test-Path $file)) {
+              throw "Expected output was not produced: $file"
+            }
+
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) {
+              throw ("Expected final ARM64EC/x64-compatible PE machine 0x8664 for {0}, got 0x{1:X4}" -f $file, $machine)
+            }
+
+            $headers = (& $link.FullName /dump /headers $file 2>&1 | Out-String)
+            if ($headers -notmatch "ARM64X") {
+              Write-Host $headers
+              throw "PE is 0x8664 but linker headers do not identify ARM64X: $file"
+            }
+
+            "ARM64EC ARM64X verified: $file"
+            "SHA256: $((Get-FileHash $file -Algorithm SHA256).Hash)"
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $dll dist/x4-asio-arm64ec.dll
+          Copy-Item $dll dist/x4-asio-arm64.dll
+          Copy-Item $smoke dist/x4-asio-stage-b4d-smoke.exe
+          Copy-Item $register dist/x4-asio-stage-b4d-register.exe
+          Copy-Item src/asio-arm64-stage-b0/test_b4d.cmd dist/test_b4d.cmd
+          Copy-Item src/asio-arm64-stage-b0/install_b4d.cmd dist/install_b4d.cmd
+          Copy-Item src/asio-arm64-stage-b0/uninstall_b4d.cmd dist/uninstall_b4d.cmd
+          Copy-Item src/asio-arm64-stage-b0/README_B4D.md dist/README.md
+
+          $aliasHash = (Get-FileHash dist/x4-asio-arm64.dll -Algorithm SHA256).Hash
+          $actualHash = (Get-FileHash dist/x4-asio-arm64ec.dll -Algorithm SHA256).Hash
+          if ($aliasHash -ne $actualHash) {
+            throw "Smoke DLL alias is not byte-identical to ARM64EC DLL"
+          }
+          "ARM64EC DLL alias hash match: $actualHash"
+
+          Compress-Archive `
+            -Path dist/x4-asio-arm64ec.dll,dist/x4-asio-arm64.dll,dist/x4-asio-stage-b4d-smoke.exe,dist/x4-asio-stage-b4d-register.exe,dist/test_b4d.cmd,dist/install_b4d.cmd,dist/uninstall_b4d.cmd,dist/README.md `
+            -DestinationPath dist/SoundBlaster-X4-ASIO-Stage-B4D-REAPER-ARM64EC.zip `
+            -Force
+
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-Stage-B4D-REAPER-ARM64EC.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload Stage B4D ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-Stage-B4D-REAPER-ARM64EC
+          path: dist/SoundBlaster-X4-ASIO-Stage-B4D-REAPER-ARM64EC.zip
+          if-no-files-found: error
+          retention-days: 14
