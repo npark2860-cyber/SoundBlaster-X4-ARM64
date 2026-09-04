@@ -24,15 +24,11 @@ Do not alter or re-prove B4D unless B5 exposes a concrete regression.
 
 ---
 
-# B5 capability matrix is now complete
+# B5 capability matrix is complete
 
-Second combined runtime capture result:
+Combined capability/runtime capture is fully proven:
 
 `B5 COMBINED CAPABILITY PROBE RESULT: PASS`
-
-See:
-
-`DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
 
 Measured Creative reference:
 
@@ -53,90 +49,84 @@ Independent B4D lifecycle x3 also re-passed in the same capture.
 
 ---
 
-# B5 productization is implemented
+# B5 productization implementation
 
 Current B5 branch:
 
-`exp/windows-arm64-asio-b5-capability-productization@de87abca5540a077e5a9d9bf9708738ccbefecd5`
+`exp/windows-arm64-asio-b5-capability-productization@60de28df150776eb8ff60ebb74d0c84483903f79`
 
-The B5 implementation was performed as one coherent batch. Validated B4D core files remain unchanged.
-
-B5 validation identity is side-by-side:
-
-`Sound Blaster X4 ARM64 ASIO B5`
-
-so the existing proven B4D entry remains available.
-
-Implemented B5 contract:
+Implemented B5 contract remains:
 
 - 2 outputs, `Int24LSB`
 - 2 inputs at 48/96 kHz, `Int24LSB`
 - output at 48/96/192 kHz
 - 192 kHz reports zero inputs
-- ASIO buffer contract 96..4800 frames, granularity 48, preferred 240
-- 512 frames accepted as a compatibility exception
+- buffers 96..4800, granularity 48, preferred 240
+- 512 compatibility exception
 - Internal Clock
 - ASIO 2.x time-info
-- Render Pin 1 + Capture Pin 4 WaveRT paths
+- Render Pin 1 + Capture Pin 4 WaveRT
 - full-duplex capture-before-render start ordering
 - joined worker lifecycle
-- separate render/capture BUSY gates immediately before pin creation
+- render/capture local+global BUSY gates before `KsCreatePin`
 - shared functional B5 source for Classic ARM64 and ARM64EC
+
+Validation identity remains side-by-side:
+
+`Sound Blaster X4 ARM64 ASIO B5`
+
+so proven B4D registration remains available.
+
+## Latest compile failure and fix
+
+First `Build ASIO B5 Productization` run reached the new B5 ARM64EC sources and failed only on SDK compatibility:
+
+- `_countof` unavailable in the ARM64EC adapted shared source;
+- Windows SDK 10.0.26100.0 uses `KSRTAUDIO_GETREADPACKET_INFO::PerformanceCounterValue`, not `PerformanceCount`;
+- C4324 was informational padding from intentional 64-byte host-buffer alignment.
+
+Fixed on the same B5 branch without touching validated B4D core:
+
+- ARM64EC WaveRT SDK adapter added compatibility definitions;
+- Classic ARM64 WaveRT adapter added with the same definitions;
+- Classic CMake switched to that adapter;
+- C4324 suppressed only on B5 driver targets.
+
+See:
+
+`DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
+
+After the fix B5 is ahead 18 / behind 0 from validated B4D, with validated B4D still the merge base.
+
+---
+
+# Immediate action
+
+Re-run `Build ASIO B5 Productization`.
+
+The workflow explicitly checks out the current B5 branch, so the rebuild must use:
+
+`60de28df150776eb8ff60ebb74d0c84483903f79`
+
+Do not perform hardware validation yet.
+
+If compile fails again, fix the remaining compiler/linker issues on the same B5 branch and keep bundling changes; do not return to A/B/C/D micro-tests.
+
+After Actions PASS:
+
+1. download `SoundBlaster-X4-ASIO-B5-Productization.zip`;
+2. close other X4 playback / move default output away if needed;
+3. run `install_and_validate_b5.cmd` once;
+4. return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+
+Only after the bundled silent validation passes should one final REAPER test cover audible output + stereo input together.
 
 ## Immutable safety
 
 Never bypass BUSY.
 
-Historical failure class remains:
+Historical collision class remains:
 
 - `WDF_VIOLATION 0x10D`
 - Parameter 1 = 5
 - stale/destroyed `WDFUSBPIPE` path in `usbaudio2` recovery
-
-B5 retains the proven Render Pin 1 gate at `init()` and re-checks the relevant render/capture pin directly before each `KsCreatePin`.
-
----
-
-# Immediate action — one build, then one bundled runtime validation
-
-Manual workflow on `main`:
-
-`.github/workflows/build-asio-b5-productization.yml`
-
-Workflow name:
-
-`Build ASIO B5 Productization`
-
-## Step 1
-
-Run this workflow once.
-
-It builds both:
-
-- ARM64EC/ARM64X B5 validation driver and tools
-- Classic ARM64 B5 DLL from the same functional source
-
-If Actions fails, fix the compile issue on the same B5 branch. Do not create A/B/C/D-style micro-branches and do not ask for a hardware test until the full package builds.
-
-## Step 2
-
-After Actions PASS, download:
-
-`SoundBlaster-X4-ASIO-B5-Productization.zip`
-
-On the X4 test system:
-
-- close REAPER and other X4 playback;
-- move Windows default playback away from X4 if needed;
-- run `install_and_validate_b5.cmd` once;
-- return `B5_PRODUCT_VALIDATION_REPORT.txt`.
-
-The script performs a single bundled silent matrix covering preferred/min/max/512 buffers, 48/96/192 output, full duplex at 48/96, repeated reopen, registration and BUSY safety.
-
-If the initial gate is BUSY/indeterminate, it stops before lifecycle work. Do not override it.
-
-## Step 3 — only after bundled runtime PASS
-
-Perform one final REAPER B5 real-use validation covering actual audible output plus stereo input. Do not split this into per-feature micro-tests.
-
-Until Actions compile PASS and the bundled runtime report pass, the new B5 transport is implemented but **not yet hardware-proven**.
