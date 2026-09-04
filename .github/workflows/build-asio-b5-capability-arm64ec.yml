@@ -1,0 +1,92 @@
+name: Build ASIO B5 Capability Probe ARM64EC
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64EC ASIO B5 capability probe
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout B5 capability source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-asio-b5-capability-productization
+
+      - name: Verify checkout and frozen parent ancestry
+        shell: pwsh
+        run: |
+          $head = git rev-parse HEAD
+          "Checked out commit: $head"
+          git merge-base --is-ancestor a95a95d014bcc1c3a521be41325841ae96dc8a61 HEAD
+          if ($LASTEXITCODE -ne 0) {
+            throw "B5 source is not descended from validated B4D a95a95d014bcc1c3a521be41325841ae96dc8a61"
+          }
+          git diff --exit-code a95a95d014bcc1c3a521be41325841ae96dc8a61 HEAD -- `
+            src/asio-arm64-stage-b0/driver_b4c.cpp `
+            src/asio-arm64-stage-b0/driver_b4d_arm64ec.cpp `
+            src/asio-arm64-stage-b0/preflight.cpp `
+            src/asio-arm64-stage-b0/preflight_b4d_arm64ec.cpp `
+            src/asio-arm64-stage-b0/wavert_engine_b4a.cpp `
+            src/asio-arm64-stage-b0/wavert_engine_b4d_arm64ec.cpp
+          if ($LASTEXITCODE -ne 0) {
+            throw "Validated B4D core changed during measurement-only B5-0"
+          }
+
+      - name: Configure MSVC ARM64EC
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b0 -B build/asio-arm64-b5 -G "Visual Studio 17 2022" -A ARM64EC
+
+      - name: Build B5 probes
+        shell: pwsh
+        run: cmake --build build/asio-arm64-b5 --config Release --target x4-asio-stage-b5-capability-probe x4-asio-stage-b5-ks-probe --parallel
+
+      - name: Verify ARM64EC ARM64X probe images and package
+        shell: pwsh
+        run: |
+          $cap = Join-Path $PWD "build/asio-arm64-b5/Release/x4-asio-stage-b5-capability-probe.exe"
+          $ks = Join-Path $PWD "build/asio-arm64-b5/Release/x4-asio-stage-b5-ks-probe.exe"
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          if (-not $vs) { throw "Visual Studio installation path not found" }
+          $link = Get-ChildItem -Path (Join-Path $vs "VC/Tools/MSVC/*/bin/Hostx64/x64/link.exe") |
+            Sort-Object FullName | Select-Object -Last 1
+          if (-not $link) { throw "link.exe not found for ARM64X verification" }
+
+          foreach ($file in @($cap, $ks)) {
+            if (-not (Test-Path $file)) { throw "Expected output missing: $file" }
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0x8664) {
+              throw ("Expected ARM64EC/x64-compatible PE 0x8664 for {0}, got 0x{1:X4}" -f $file, $machine)
+            }
+            $headers = (& $link.FullName /dump /headers $file 2>&1 | Out-String)
+            if ($headers -notmatch "ARM64X") {
+              Write-Host $headers
+              throw "PE lacks ARM64X header identification: $file"
+            }
+            "ARM64EC ARM64X verified: $file"
+            "SHA256: $((Get-FileHash $file -Algorithm SHA256).Hash)"
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $cap dist/x4-asio-stage-b5-capability-probe.exe
+          Copy-Item $ks dist/x4-asio-stage-b5-ks-probe.exe
+          Copy-Item src/asio-arm64-stage-b0/probe_b5.cmd dist/probe_b5.cmd
+          Copy-Item src/asio-arm64-stage-b0/README_B5_CAPABILITY.md dist/README_B5_CAPABILITY.md
+          Compress-Archive -Path dist/x4-asio-stage-b5-capability-probe.exe,dist/x4-asio-stage-b5-ks-probe.exe,dist/probe_b5.cmd,dist/README_B5_CAPABILITY.md -DestinationPath dist/SoundBlaster-X4-ASIO-B5-Capability-ARM64EC.zip -Force
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-B5-Capability-ARM64EC.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload B5 capability ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-B5-Capability-ARM64EC
+          path: dist/SoundBlaster-X4-ASIO-B5-Capability-ARM64EC.zip
+          if-no-files-found: error
+          retention-days: 14
