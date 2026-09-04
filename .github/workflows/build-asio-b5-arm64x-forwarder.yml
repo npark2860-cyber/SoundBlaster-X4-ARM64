@@ -2,6 +2,12 @@ name: Build B5 ARM64X ASIO Forwarder Package
 
 on:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Source branch/ref containing the B5 ARM64X packaging layer
+        required: true
+        default: exp/windows-arm64-asio-b5-arm64x-forwarder
+        type: string
 
 permissions:
   contents: read
@@ -13,8 +19,10 @@ jobs:
     timeout-minutes: 25
 
     steps:
-      - name: Checkout requested branch
+      - name: Checkout requested source ref
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
 
       - name: Configure and build ARM64EC B5 backend
         shell: pwsh
