@@ -8,10 +8,6 @@ Repository:
 
 `npark2860-cyber/SoundBlaster-X4-ARM64`
 
-Default branch:
-
-`main`
-
 Validated B4D source:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
@@ -22,24 +18,25 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
+`exp/windows-arm64-asio-b5-capability-productization@bb2a42e143cc0b48a60a131e44a06002e3594ec5`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_RUNTIME_48K_PASS_96K_SCHEDULING_FIX.md`
-6. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
-7. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
-8. `NEXT_ACTION_ASIO.md`
-9. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
-10. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
-11. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
-12. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
+2. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_RUNTIME_48K_PASS_96K_SCHEDULING_FIX.md`
+7. `NEXT_ACTION_ASIO.md`
+8. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
+9. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
+10. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+11. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
+12. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+13. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
 
 CTCDC remains deferred until the B5 first-release ASIO pass is closed.
 
@@ -47,7 +44,7 @@ CTCDC remains deferred until the B5 first-release ASIO pass is closed.
 
 # Proven fallback
 
-Independent B4D real playback in REAPER ARM64EC remains hardware/user proven:
+B4D remains hardware/user proven in REAPER ARM64EC:
 
 - 48 kHz
 - stereo output
@@ -69,8 +66,8 @@ Never bypass BUSY.
 B5 retains:
 
 1. Render Pin 1 local/global preflight at ASIO `init()`;
-2. Render Pin 1 local/global re-check immediately before render `KsCreatePin`;
-3. Capture Pin 4 local/global re-check immediately before capture `KsCreatePin`;
+2. Render Pin 1 local/global re-check before render `KsCreatePin`;
+3. Capture Pin 4 local/global re-check before capture `KsCreatePin`;
 4. mandatory joined worker before hardware teardown.
 
 Historical collision class must never be intentionally reproduced:
@@ -81,109 +78,161 @@ Historical collision class must never be intentionally reproduced:
 
 ---
 
-# Latest proven runtime before mux build
+# B5 first-release contract
 
-Returned report generated 2026-09-04 11:50:11.
+- 2 outputs, Int24LSB
+- 2 inputs at 48/96 kHz, Int24LSB
+- output 48/96/192 kHz
+- 192 kHz reports zero inputs
+- buffer 96..4800 / step 48 / preferred 240
+- 512 compatibility exception
+- Internal Clock
+- ASIO 2.x time-info
+- Render Pin 1 + Capture Pin 4 WaveRT
 
-48 kHz / 240 output-only:
+---
 
-- three cycles PASS
-- callbacks 139 / 139 / 140
+# Build status
+
+The previous ARM64EC `cguid.h::__uuidof` compile failure was resolved enough for the productization package to build and run.
+
+The returned runtime report generated `2026-09-04 12:25:44.97` contains:
+
+`adapter=dual-event-mux-v2`
+
+and shows MMCSS `Pro Audio` with priority OK. Therefore mux v2 was physically present in the loaded DLL and executed.
+
+---
+
+# Latest runtime evidence — mux v2
+
+Registration: PASS.
+
+Property-only Render Pin 1 idle gate: FREE.
+
+KS capability probe: PASS.
+
+## 48 kHz / 240 output-only
+
+Three cycles PASS:
+
+- callbacks 141 / 139 / 139
 - stop=ASE_OK
 - workerJoined=YES
+- no packet/index/copy errors
 
-48 kHz / 240 full duplex:
+## 48 kHz / 240 full duplex
 
-- two cycles PASS
-- callbacks=141 each
-- renderNotif=142 each
-- captureNotif=141 each
-- outFrames=inFrames=33840 each
+Two cycles PASS:
+
+- callbacks 138 / 138
+- renderNotif 139 / 139
+- captureNotif 138 / 138
+- outFrames=inFrames=33120
 - stop=ASE_OK
 
-96 kHz / 240 full duplex failed because the original worker waited Render then Capture serially on one thread. Render auto-reset notifications coalesced while the worker blocked on Capture. Trace examples included 23->25, 35->37 and 43->45. Later Capture also showed a packet discontinuity and `GETREADPACKET` Win32 21.
+## 96 kHz / 240 full duplex
 
-This is why the B5 dual-event mux path was introduced.
+First cycle produced one callback, then mux v2 failed with:
 
----
+`B5 worker DUPLEX failed: next render notification arrived before prior capture synchronization`
 
-# Mux v2 build status — second identical C2059
+Final strict counters:
 
-The next manual ARM64EC build again failed before DLL creation:
+- callback-index errors = 0
+- render copy errors = 0
+- capture copy errors = 0
+- render packet discontinuities = 0
+- render position regressions = 0
+- capture packet discontinuities = 0
 
-```text
-Windows Kits\10\Include\10.0.26100.0\um\cguid.h(33,18):
-error C2059: syntax error: '__uuidof'
-```
+Therefore this was not a WaveRT packet or copy failure. It was a false-positive synchronization failure caused by mux-v2 policy.
 
-while compiling `driver_b5_arm64ec.cpp`.
-
-Therefore the previous explanation that relocating `#define private public` alone removed SDK contamination was incomplete.
-
-This run has no runtime/hardware meaning.
+Mux v2 required exact `render N -> capture N-1` pairing and allowed only one pending render packet. At 96 kHz/240 the Render and Capture notification streams can have a stable phase offset while both hardware packet sequences remain continuous.
 
 ---
 
-# New compile fix — isolate KS headers from COM driver
+# Fix implemented — dual-event-mux-v3
 
 Current B5:
 
-`9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
+`bb2a42e143cc0b48a60a131e44a06002e3594ec5`
 
-The mux-v2 driver translation units had added these headers before ASIO/COM declarations:
+Full-duplex policy is now:
 
-- `winioctl.h`
-- `ks.h`
-- `ksmedia.h`
+- Render remains the ASIO callback/master clock.
+- Render callback/write-ahead never waits for exact Capture phase.
+- Capture is an independent producer.
+- Capture packets are staged in two fixed slots and tagged by absolute packet number.
+- Capture is serviced both from its notification event and opportunistically on every render wake.
+- The oldest unconsumed staged Capture packet is copied to the current ASIO input buffer before callback.
+- A render period with no ready Capture packet is a phase miss, not immediate failure; that input buffer is zero-filled.
+- More than four consecutive Capture phase misses is treated as real starvation and remains fatal.
 
-Mux v2 no longer needs them directly because it uses the WaveRT engine's public API. They were removed from both ARM64EC and Classic B5 driver adapters.
+Strict failures remain:
 
-Kernel Streaming headers remain in the WaveRT engine translation units, where KS IOCTL/property types are actually required.
+- render packet discontinuity
+- capture packet discontinuity
+- render presentation-position regression
+- callback buffer-index repetition
+- render/capture copy failure
+- capture staging overrun
+- capture staging sequence mismatch
+- sustained capture starvation
+- worker failure
 
-No runtime logic or safety behavior changed:
+BUSY and joined-worker safety are unchanged.
 
-- dual-event mux remains
-- exact render N / capture N-1 pairing remains
-- render write-ahead N+1 remains
-- capture `ERROR_NOT_READY` remains transient
-- real packet discontinuities remain fatal
-- callback/copy/sync failures remain fatal
-- MMCSS `Pro Audio` remains
-- BUSY gates remain immutable
+Runtime/build marker is now:
 
-Runtime/build marker remains:
+`dual-event-mux-v3`
 
-`dual-event-mux-v2`
+The main build workflow scans both ARM64EC and Classic ARM64 DLLs and refuses to package unless this marker is present.
 
 ---
 
-# Remaining architecture risk if C2059 repeats
+# B4D protection status
 
-The ARM64EC adapter still temporarily defines `_M_ARM64` and undefines `_M_ARM64EC` around the shared `driver_b5.cpp` because that shared source currently rejects ARM64EC directly.
+Compared with validated B4D `a95a95d...`:
 
-Microsoft documents that an ARM64EC compilation normally exposes x64-compatible architecture macros (`_M_AMD64`) plus `_M_ARM64EC`, not `_M_ARM64`.
-
-Therefore, if the same `cguid.h::__uuidof` error repeats after the KS-header isolation change, do not do another include-order patch. The next engineering action is to make the B5 shared source directly ARM64EC-aware and remove the architecture macro shim entirely.
+- ahead_by: 44
+- behind_by: 0
+- merge base: exactly `a95a95d014bcc1c3a521be41325841ae96dc8a61`
+- validated B4D core remains untouched
 
 ---
 
 # Immediate next action
 
-Do not hardware-test yet.
+Do not reuse the mux-v2 ZIP.
 
 Run manual workflow:
 
 `Build ASIO B5 Productization`
 
-The build must prove:
+Required before hardware validation:
 
-1. ARM64EC B5 DLL compile/link PASS;
-2. B5 helpers compile/link PASS;
-3. Classic ARM64 B5 DLL compile/link PASS;
+1. ARM64EC B5 compile/link PASS;
+2. helper compile/link PASS;
+3. Classic ARM64 B5 compile/link PASS;
 4. PE/ARM64X checks PASS;
-5. both DLLs contain `dual-event-mux-v2`;
-6. productization ZIP is produced.
+5. both DLLs contain `dual-event-mux-v3`;
+6. ZIP produced.
 
-If the identical `cguid.h::__uuidof` C2059 appears again, remove the ARM64EC architecture-spoof shim next; do not hardware-test or create a microbranch.
+After Actions PASS, run the new `install_and_validate_b5.cmd` once and return the new report.
 
-Only after full Actions PASS should the new ZIP be used with `install_and_validate_b5.cmd`.
+A report counts as mux-v3 evidence only if it contains:
+
+`adapter=dual-event-mux-v3`
+
+The strict matrix still must reach:
+
+- 48k/240 output x3
+- 48k/240 full duplex x2
+- 96k/240 full duplex x2
+- 192k/240 output x2
+- 48k/96 output x1
+- 48k/4800 output x1
+- 48k/512 compatibility output x1
+
+Only after full matrix PASS should final REAPER validation cover audible 24-bit output plus real stereo input together.
