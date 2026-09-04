@@ -1,9 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <winioctl.h>
-#include <ks.h>
-#include <ksmedia.h>
 #include <mmsystem.h>
 #include <avrt.h>
 
@@ -45,9 +42,9 @@ HANDLE WINAPI b5_create_mux_thread(
     LPDWORD);
 } // namespace
 
-// All SDK/project headers above are parsed normally. Only the translation-unit
-// local B5 driver class is exposed to its mux implementation below; the macro
-// can no longer alter COM/SDK declarations such as cguid.h::__uuidof.
+// Keep Kernel Streaming headers isolated in the WaveRT engine translation unit.
+// The B5 COM/ASIO driver itself needs only the engine's public API. This avoids
+// ks.h installing GUID/__uuidof helper macros before COM headers are parsed.
 #define CreateThread b5_create_mux_thread
 #define private public
 #define _M_ARM64 1
