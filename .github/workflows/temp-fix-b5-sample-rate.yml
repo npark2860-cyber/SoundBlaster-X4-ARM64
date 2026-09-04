@@ -49,7 +49,7 @@ jobs:
           git rm .github/workflows/temp-fix-b5-sample-rate.yml
           git diff --check
 
-          $changed = @(git diff --name-only)
+          $changed = @(git diff --name-only HEAD)
           if ($changed.Count -ne 2) { throw "Expected driver + temp workflow only, got $($changed -join ', ')" }
           if ($changed -notcontains "src/asio-arm64-stage-b0/driver_b5.cpp") { throw "driver_b5.cpp missing from diff" }
           if ($changed -notcontains ".github/workflows/temp-fix-b5-sample-rate.yml") { throw "temp workflow removal missing from diff" }
