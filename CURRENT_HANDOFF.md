@@ -16,9 +16,15 @@ Validated Classic ARM64 B4C:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info@e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
 
-Current B5 source:
+Current B5 branch HEAD:
 
-`exp/windows-arm64-asio-b5-capability-productization@64e34b48714789ab17fba57be34b054f2170b4e9`
+`exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
+
+Latest runtime-code commit:
+
+`64e34b48714789ab17fba57be34b054f2170b4e9`
+
+The branch HEAD after that runtime-code commit only updates `README_B5_PRODUCTIZATION.md`.
 
 At a later chat start, verify actual GitHub branch/main HEADs again. Do not reconstruct state from conversation memory.
 
@@ -217,7 +223,7 @@ See:
 
 # Implemented one-shot post-coalesce stale-wake fix
 
-Current B5 HEAD:
+Latest runtime-code commit:
 
 `64e34b48714789ab17fba57be34b054f2170b4e9`
 
@@ -255,7 +261,7 @@ B4D core remains untouched.
 
 # Immediate next action
 
-1. run manual `Build ASIO B5 Productization` on current B5 HEAD;
+1. run manual `Build ASIO B5 Productization` on current B5 branch HEAD;
 2. require ARM64EC + Classic ARM64 compile/link PASS and all four markers;
 3. install the new ZIP with all other X4 clients closed;
 4. **do not rerun geometry**;
