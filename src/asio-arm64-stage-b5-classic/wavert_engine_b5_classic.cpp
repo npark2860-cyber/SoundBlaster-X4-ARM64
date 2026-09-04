@@ -27,3 +27,4 @@
 #define PerformanceCount PerformanceCounterValue
 
 #include "../asio-arm64-stage-b0/wavert_engine_b5.cpp"
+#include "../asio-arm64-stage-b0/wavert_engine_b5_signaled.inl"
