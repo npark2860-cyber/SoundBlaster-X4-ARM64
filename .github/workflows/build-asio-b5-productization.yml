@@ -110,6 +110,7 @@ jobs:
           Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-192k-geometry-probe.exe dist/
           Copy-Item src/asio-arm64-stage-b0/install_and_validate_b5.cmd dist/
           Copy-Item src/asio-arm64-stage-b0/probe_b5_192k_geometry.cmd dist/
+          Copy-Item src/asio-arm64-stage-b0/probe_b5_192k_cadence.cmd dist/
           Copy-Item src/asio-arm64-stage-b0/uninstall_b5.cmd dist/
           Copy-Item src/asio-arm64-stage-b0/README_B5_PRODUCTIZATION.md dist/
           Compress-Archive -Path dist/* -DestinationPath dist/SoundBlaster-X4-ASIO-B5-Productization.zip -Force
