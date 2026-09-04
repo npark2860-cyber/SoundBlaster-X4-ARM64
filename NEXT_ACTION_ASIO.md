@@ -8,48 +8,39 @@ Updated: 2026-09-04 KST
 2. active-playback collision mechanism
 3. Creative-equivalent pin-instance coexistence gate
 4. native ARM64 ASIO COM Stage B0 ABI shell
-5. ASIO COM Stage B1 coexistence preflight in FREE and BUSY states
-6. ASIO COM Stage B2 fixed WaveRT lifecycle in FREE and BUSY states
-7. ASIO COM Stage B3A host double-buffer / `bufferSwitch` ABI with zero DMA copy
-8. ASIO COM Stage B3B host planar PCM -> interleaved mapped WaveRT DMA transfer with audible X4 output
-9. ASIO COM Stage B4A asynchronous `start()` / worker / joined `stop()` lifetime
-10. ASIO COM Stage B4B host query contract: channels, clock, block-aligned sample position/timestamp
+5. Stage B1 coexistence preflight
+6. Stage B2 fixed WaveRT lifecycle
+7. Stage B3A ASIO double-buffer / `bufferSwitch` ABI
+8. Stage B3B host PCM -> mapped WaveRT DMA with audible X4 output
+9. Stage B4A asynchronous worker / joined stop lifetime
+10. Stage B4B host query contract: channels, clock, block-aligned sample position/timestamp
+11. Stage B4C ASIO 2.x time-info negotiation and `bufferSwitchTimeInfo` transport — first hardware run functionally succeeded; original smoke had a coarse-timer false FAIL
 
 Do not intentionally reproduce the known green-screen collision.
 
-## Frozen hardware/streaming baseline
+## Frozen streaming baseline
 
-Keep unchanged for Stage B4C:
+Keep unchanged:
 
 - native Windows ARM64
-- X4 `msft_wave`
-- Render Pin 1
+- X4 `msft_wave`, Render Pin 1
 - 48 kHz stereo 16-bit PCM
-- ASIO buffer size 512 frames
-- WaveRT cyclic buffer 4096 bytes
-- NotificationCount=2
+- ASIO buffer 512 frames
+- WaveRT cyclic buffer 4096 bytes, NotificationCount=2
 - PacketCount-derived write-ahead slot
-- both coexistence gates
-- B4A single worker thread
-- worker join before KS teardown
+- coexistence gate at init and immediately before `KsCreatePin`
+- single asynchronous worker thread
+- joined worker before KS teardown
 - no callback after joined `stop()` returns
-- B4B logical sample position `0, 512, 1024, ...`
+- logical ASIO sample position `0, 512, 1024, ...`
 
-B4B hardware-proved a monotonic QPC-derived timestamp. Stage B4C changes only the **host-facing ASIO timestamp source** to `timeGetTime()`-derived nanoseconds because the ASIO Windows time-info specification explicitly requires that system reference.
-
-## Stage B3B — hardware PASS + audible output
-
-Validated source:
+## Validated Stage B3B
 
 `exp/windows-arm64-asio-com-stage-b3b-dma-copy@08ec4db74f6a5fcf49b301991628f458bb6d666e`
 
-The low-level 440 Hz smoke signal was audibly confirmed through the Sound Blaster X4.
+Audible 440 Hz output through X4 confirmed.
 
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B3B_DMA_RUNTIME_SUCCESS.md`.
-
-## Stage B4A — hardware PASS
-
-Validated source:
+## Validated Stage B4A
 
 `exp/windows-arm64-asio-com-stage-b4a-async-worker@996025332bf17341b584095260c1abec93222d84`
 
@@ -57,119 +48,121 @@ Key proof:
 
 ```text
 startDurationMs=4.035 callbacksAtStartReturn=0 returnedBefore20=YES
-callbacksBeforeStop=20 callbackThread=17304 mainThread=15264
 stopMessage=B4A stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
 callbackStats count=20 quiescentAfterStop=20 indexErrors=0 directProcessErrors=0 threadErrors=0 hostSampleWrites=20480
 STAGE B4A ASYNC RESULT: PASS (ASYNC START/WORKER/STOP LIFETIME)
 ```
 
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4A_ASYNC_RUNTIME_SUCCESS.md`.
-
-## Stage B4B — hardware PASS
-
-Validated source:
+## Validated Stage B4B
 
 `exp/windows-arm64-asio-com-stage-b4b-host-query@84646e7a5b8d7808e72bcf5fde545b78d34ced3c`
 
-Runtime proof:
+Key proof:
 
 ```text
-ABI ASIOSamples=8 ASIOTimeStamp=8 ASIOClockSource=48/4 ASIOChannelInfo=52/4 ASIOBufferInfo=24/4
 getChannels=0 inputs=0 outputs=2
 channel0Before hr=0 active=0 group=0 type=16 name=X4 Output L
 channel1Before hr=0 active=0 group=0 type=16 name=X4 Output R
-clock countHr=0 count=1 fillHr=0 index=0 assoc=-1/-1 current=1 name=Internal set0=0 set1=-998
-getSamplePosition before start=-996 expected=-996
-...
+clock ... index=0 ... current=1 name=Internal set0=0 set1=-998
 B4B bufferSwitch callback=1 ... samplePosition=0 ...
 B4B bufferSwitch callback=2 ... samplePosition=512 ...
 ...
-B4B bufferSwitch callback=20 ... samplePosition=9728 ...
-stopMessage=B4B stop OK workerJoined=YES notif=20 cb=20 dmaWrites=20 dmaFrames=10240
 callbackStats count=20 quiescentAfterStop=20 indexErrors=0 directProcessErrors=0 threadErrors=0 positionErrors=0 timestampErrors=0 hostSampleWrites=20480 lastPosition=9728
-getSamplePosition after stop=-996 expected=-996
-channelActiveAfterDispose=0 expected=0
 STAGE B4B HOST QUERY RESULT: PASS (HOST QUERY CONTRACT + B4A ASYNC TRANSPORT)
 ```
 
-Hardware-proven B4B invariants:
-
-- two deterministic output channels report `ASIOSTInt16LSB`
-- `isActive` tracks buffer lifetime
-- one internal clock source works
-- `getSamplePosition()` returns `ASE_SPNotAdvancing` outside RUN
-- during RUN, logical block-start sample position advances exactly 512 frames per callback
-- timestamp is monotonic
-- B4A worker/DMA lifetime remains intact
-
-See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4B_HOST_QUERY_RUNTIME_SUCCESS.md`.
-
-## Stage B4C — ASIO 2.x time-info implemented; build/runtime pending
+## Stage B4C — ASIO 2.x time-info
 
 Branch:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info`
 
-B4C starts from the exact validated B4B HEAD and changes only the ASIO 2.x time-info / host timing contract. The proven WaveRT engine is not modified.
+Current corrected-smoke HEAD:
+
+`e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
 
 Implemented:
 
 - pack-4 `AsioTimeInfo`, `ASIOTimeCode`, `ASIOTime`
 - `ASIOFuture(kAsioCanTimeInfo) -> ASE_SUCCESS`
-- at `createBuffers()`, driver calls host `asioMessage(kAsioSupportsTimeInfo)`
-- if host returns 1 and supplies `bufferSwitchTimeInfo`, callbacks switch from legacy `bufferSwitch()` to `bufferSwitchTimeInfo()`
-- `ASIOTime.timeInfo` carries:
-  - B4B logical block-start sample position
-  - Windows ASIO system reference from `timeGetTime() * 1,000,000` nanoseconds
-  - 48000 Hz sample rate
-  - speed 1.0
-  - system-time/sample-position/sample-rate/speed valid flags
-- `getSamplePosition()` returns the exact same block position/timestamp pair used in `ASIOTime`
+- host negotiation via `asioMessage(kAsioSupportsTimeInfo)`
+- successful negotiation switches callbacks to `bufferSwitchTimeInfo()`
+- legacy `bufferSwitch()` retained only as fallback
+- `ASIOTime.timeInfo` carries logical block-start sample position, Windows ASIO `timeGetTime()`-derived system time, 48 kHz sample rate and speed 1.0
+- `getSamplePosition()` returns the same block position/timestamp pair used in `ASIOTime`
 - time code remains invalid/unused
-- legacy `bufferSwitch` remains present only as fallback
-- B4A `wavert_engine_b4a.cpp` remains unchanged
+- `wavert_engine_b4a.cpp` remains unchanged
 
-Registry-free B4C smoke additionally requires:
+### First B4C hardware run
 
-- time-info negotiation exactly once
-- `future(kAsioCanTimeInfo)` success
-- `bufferSwitchTimeInfo` used for every streaming callback
-- legacy `bufferSwitch` count remains zero after negotiation
-- ASIOTime sample position/timestamp exactly match `getSamplePosition()` inside the callback
-- zero time-info/position/timestamp/consistency errors
-- existing DMA/worker/stop invariants remain intact
+The original smoke printed FAIL, but only because it incorrectly required `systemTime` to strictly increase on every 512-frame callback.
 
-Manual workflow:
+Observed:
 
-`Build ASIO COM Stage B4C Time Info ARM64`
+```text
+future(kAsioCanTimeInfo)=1061701536 expected=1061701536
+B4C host asioMessage kAsioSupportsTimeInfo -> 1
+timeInfoNegotiationCalls=1
+...
+callbacksBeforeStop=21 legacyCallbacks=0
+stopMessage=B4C stop OK workerJoined=YES notif=21 cb=21 dmaWrites=21 dmaFrames=10752
+callbackStats timeInfo=21 quiescentAfterStop=21 legacy=0 indexErrors=0 directProcessErrors=0 threadErrors=0 timeInfoErrors=0 positionErrors=0 timestampErrors=6 consistencyErrors=0 hostSampleWrites=21504 lastPosition=10240
+getSamplePosition after stop=-996 expected=-996
+DllCanUnloadNow hr=0x00000000
+STAGE B4C TIME INFO RESULT: FAIL
+```
 
-Trigger: `workflow_dispatch` only.
+All ASIO2 negotiation, callback mode, sample-position, consistency, DMA, worker lifetime and cleanup invariants succeeded. `timestampErrors=6` came from repeated adjacent `timeGetTime()` ticks.
 
-After a successful build, run with normal Windows playback on X4 idle:
+ASIO Windows `systemTime` is derived from `timeGetTime()`. Its default timer resolution can be around 15.6 ms, while the frozen 512/48k block period is about 10.67 ms. Therefore adjacent callbacks may legitimately receive equal timestamps.
+
+Correct smoke invariant:
+
+- timestamp > 0
+- timestamp never regresses (`current >= previous`)
+- timestamp advances at least once during the multi-callback run
+- `ASIOTime.systemTime` equals `getSamplePosition()` timestamp inside the same callback
+
+Production driver code was not modified for this correction.
+
+See `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_TIME_INFO_FIRST_RUNTIME.md`.
+
+## Corrected B4C build
+
+Workflow run: `33819803619`, attempt 2 job `100862010928`
+
+Checkout:
+
+`e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
+
+Build verified:
+
+- `x4-asio-arm64.dll` ARM64 `0xAA64`
+- `x4-asio-stage-b4c-smoke.exe` ARM64 `0xAA64`
+- corrected source `smoke_b4c_monotonic.cpp` compiled
+
+Hashes:
+
+- DLL SHA256 `480CD573CDE4B61F852592FA566E772AD8AC9F4EDE286E6440AAF2AA09CB054B`
+- smoke SHA256 `70177DA7DDF7A30E14EC816A23FC4A8C4B62FB1DF6EE9F8B09CD593ACE7230D7`
+- distribution ZIP SHA256 `5F69C848DFA80C906DBA311221FF8943E56A54AEBA5725FD0BF92737A857FEFB`
+
+## Immediate next action
+
+Run the corrected registry-free artifact with normal Windows X4 playback idle:
 
 ```bat
 x4-asio-stage-b4c-smoke.exe
 ```
 
-Expected proof points:
+Expected corrected proof includes:
 
 ```text
-ABI ASIOTimeInfo=48/4 ASIOTimeCode=84/4 ASIOTime=148/4 ASIOCallbacks=32/4
-future(kAsioCanTimeInfo)=1061701536 expected=1061701536
-B4C host asioMessage kAsioSupportsTimeInfo -> 1
-createMessage=B4C buffers ready timeInfo=YES; ...
-timeInfoNegotiationCalls=1
-startMessage=B4C start OK ... timeInfo=YES position=0
-B4C bufferSwitchTimeInfo callback=1 index=0 ... samplePosition=0 ...
-B4C bufferSwitchTimeInfo callback=2 index=1 ... samplePosition=512 ...
-...
-callbacksBeforeStop=20 legacyCallbacks=0 ...
-stopMessage=B4C stop OK workerJoined=YES ...
-callbackStats timeInfo=20 quiescentAfterStop=20 legacy=0 ... timeInfoErrors=0 positionErrors=0 timestampErrors=0 consistencyErrors=0 ...
+callbackStats ... timestampErrors=0 consistencyErrors=0 timestampAdvanced=YES ...
 STAGE B4C TIME INFO RESULT: PASS (ASIO2 TIME-INFO CALLBACK + B4B TRANSPORT)
 ```
 
-A legitimate asynchronous stop-boundary overshoot above 20 remains acceptable if final counts match and remain quiescent after joined stop.
+A legitimate asynchronous stop-boundary overshoot above 20 callbacks remains acceptable if final counts match and stay quiescent after joined stop.
 
 If Windows playback owns X4, BUSY remains a safe refusal. Never bypass BUSY.
 
@@ -189,11 +182,11 @@ Do not add yet:
 - Creative runtime dependencies
 - custom kernel driver
 
-After B4C hardware PASS, the next controlled milestone is driver registration and the first real REAPER load/playback test at the frozen 48 kHz / 16-bit / stereo / 512-frame configuration.
+After corrected B4C hardware PASS, the next controlled milestone is ASIO registration and the first real REAPER load/playback test at 48 kHz / 16-bit / stereo / 512 frames.
 
 ## Architecture
 
-native ARM64 DAW
+native ARM64 REAPER / DAW
 -> independent native ARM64 ASIO COM DLL
 -> SetupAPI / `KsCreatePin` / mapped WaveRT cyclic buffer
 -> Microsoft `usbaudio2.sys`
