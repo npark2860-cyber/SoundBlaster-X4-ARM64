@@ -2,21 +2,9 @@
 
 Updated: 2026-09-04 KST
 
-## Current status
+## Current validated baseline
 
-The first real DAW milestone is complete.
-
-Hardware/user-proven chain:
-
-```text
-REAPER Windows ARM build (ARM64EC)
--> registered independent ARM64EC ASIO COM DLL
--> ASIO 2.x host contract / time-info callbacks
--> mapped WaveRT DMA
--> Microsoft usbaudio2.sys
--> Sound Blaster X4
--> audible project playback
-```
+Real REAPER ARM64EC playback through the independent driver is hardware/user proven.
 
 Validated B4D source:
 
@@ -26,204 +14,152 @@ Validated Classic ARM64 B4C source:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info@e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
 
-B4D build proof:
-
-- workflow `Build ASIO COM Stage B4D REAPER ARM64EC`
-- run `33822642892`
-- job `100868446837`
-- result `success`
-- ARM64X verification PASS
-
-Registered-host proof:
-
-```text
-CoCreateInstance hr=0x00000000
-driverName=Sound Blaster X4 ARM64
-driverVersion=107
-B4D HOST PROBE RESULT: PASS (REGISTRY COM LOAD + IASIO VTABLE)
-```
-
-REAPER proof:
-
-- independent driver listed and selected
-- output channels `X4 Output L/R` visible
-- 48 kHz / 512 frames engine opens
-- actual X4 playback works
-
-Do not re-prove B4D unless a later change regresses it.
-
-## New reference fact
-
-The existing Creative `SB USB RT ASIO` driver also works correctly in the same REAPER ARM64EC environment.
-
-Use it as a **behavioral reference** for capability discovery:
-
-- channel counts/names
-- sample types
-- sample-rate support
-- buffer-size contract
-- latency reporting
-- clock sources
-- input/output exposure
-- lifecycle behavior
-
-Do not copy proprietary code or make Creative binaries a runtime dependency.
-
-See `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`.
-
----
-
-# Immediate next milestone — B5 capability/productization batch
-
-Do not return to A/B/C/D micro-stages.
-
-The next development cycle should be one coherent branch with measurable internal checkpoints and one combined user test package.
-
-## Branch start
-
-Before writing code, re-check the actual B4D branch HEAD.
-
-If it still matches the validated source, create:
-
-`exp/windows-arm64-asio-b5-capability-productization`
-
-from:
-
-`a95a95d014bcc1c3a521be41325841ae96dc8a61`
-
-Do **not** branch implementation work from `main`; `main` carries documentation/orchestration state.
-
-## B5-0 — reference/capability probe first
-
-Before modifying the proven transport, establish a compact capability matrix from the working Creative reference driver and the X4 KS/WaveRT interface.
-
-Probe Creative and our driver **sequentially**, never concurrently.
-
-Collect at minimum:
-
-1. ASIO registry name / CLSID discovery
-2. `getDriverName()` / `getDriverVersion()`
-3. `getChannels()`
-4. `getBufferSize()` min/max/preferred/granularity
-5. `getSampleRate()`
-6. `canSampleRate()` over a candidate rate list
-7. `getClockSources()`
-8. `getChannelInfo()` for all exposed channels
-9. sample types reported by each channel
-10. `getLatencies()` after a valid buffer setup where safe
-11. start/stop/reopen/close behavior
-
-Also query the X4 `msft_wave` pin data ranges without creating an unsafe second render stream where possible.
-
-The output of this probe becomes the independent implementation specification.
-
-## B5 implementation targets
-
-Work through these in the same development cycle, but preserve each result in debug history so regressions stay attributable.
-
-### 1. Stability / lifecycle
-
-Automate enough of the current known-good path to cover:
-
-- repeated start/stop
-- repeated buffer create/dispose
-- repeated driver reopen/close
-- longer continuous playback
-- clean unload
-
-Do not intentionally run another X4 stream concurrently. BUSY must remain a safe refusal.
-
-### 2. 24-bit output
-
-Add native 24-bit output only after the reference/KS matrix confirms the exact X4 format contract.
-
-Preserve the 16-bit/48 kHz/512 path as a regression baseline.
-
-### 3. Additional sample rates
-
-Implement only rates confirmed by the reference driver and/or X4 KS data ranges.
-
-Do not assume the full common set merely because the hardware is a modern USB audio device.
-
-### 4. Selectable ASIO buffer sizes
-
-Implement the measured Creative/ASIO contract rather than hardcoding an arbitrary list.
-
-The existing 512-frame path must remain one validated option.
-
-### 5. Capture/input
-
-Add the narrowest practical stereo input path first.
-
-Keep capture work separate from multichannel output expansion so failures remain diagnosable.
-
-### 6. Dual-target maintainability
-
-Preserve both build paths:
-
-- Classic ARM64 for a pure ARM64 host
-- ARM64EC/ARM64X for current REAPER ARM64EC
-
-Where practical, share the functional ASIO/WaveRT source and keep architecture-specific adapter code thin.
-
----
-
-# User-test strategy
-
-Protect user time.
-
-Do not ask for a manual test after every tiny code change.
-
-Once a coherent B5 slice is buildable, package one combined sequence that checks:
-
-1. architecture/PE validation
-2. registry-free smoke
-3. registration + COM host probe
-4. capability report
-5. REAPER load
-6. playback at the newly supported formats/buffer sizes
-7. start/stop/reopen stress
-8. input test when capture is included
-
-If one subtest fails, fix that subtest on the same B5 branch and rerun the workflow rather than creating unnecessary A/B/C/D branches.
-
----
-
-# Known-good baseline — do not disturb casually
-
-The proven B4D first-use configuration is:
+Known-good B4D transport:
 
 - REAPER ARM64EC
 - 48 kHz
 - stereo output
-- signed 16-bit PCM transport
+- signed 16-bit PCM
 - 512 ASIO frames
 - X4 `msft_wave`, Render Pin 1
 - WaveRT cyclic buffer 4096 bytes
 - NotificationCount=2
 - `writePacket = PacketCount + 1`
 - slot = `writePacket % 2`
-- local + global pin-instance coexistence gates
-- B4A worker/joined-stop lifetime
-- B4C ASIO 2.x time-info behavior
+- local + global pin-instance BUSY gates
+- joined worker stop
+- ASIO 2.x time-info callbacks
 
-The core path is already proven. Extend it; do not rewrite it without evidence.
+Do not re-prove or rewrite B4D unless B5 introduces a regression.
 
-# Immutable safety rule
+## Creative behavioral reference
+
+Creative `SB USB RT ASIO` is confirmed working in the same REAPER ARM64EC environment. Use it only as a black-box behavioral reference. Do not copy proprietary code or add Creative runtime dependencies.
+
+Reference dimensions:
+
+- input/output channel counts and names
+- ASIO sample types
+- sample-rate support
+- buffer min/max/preferred/granularity
+- latency reporting
+- clock sources
+- lifecycle behavior
+
+See:
+
+`DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+
+---
+
+# B5-0 is implemented — next action is one capability capture
+
+B5 branch:
+
+`exp/windows-arm64-asio-b5-capability-productization@bf5039e57ad0617db2e14269389f62c7e046bcb7`
+
+Parent:
+
+`a95a95d014bcc1c3a521be41325841ae96dc8a61`
+
+Compare state:
+
+- ahead of validated B4D by exactly 1 commit
+- behind by 0
+- validated B4D is the merge base
+
+Implementation record:
+
+`DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_PROBE_IMPLEMENTED.md`
+
+## What B5-0 contains
+
+The validated B4D transport/core is unchanged. B5-0 adds measurement-only tools:
+
+- `x4-asio-stage-b5-capability-probe.exe`
+- `x4-asio-stage-b5-ks-probe.exe`
+- `probe_b5.cmd`
+- `README_B5_CAPABILITY.md`
+
+The ASIO probe records the Creative and independent contracts in the same format. The KS probe is property-only and queries pin counts/dataflow, local/global instances, and `KSPROPERTY_PIN_DATARANGES` without creating a pin.
+
+The combined script performs, sequentially:
+
+1. X4 idle/BUSY gate + KS/WaveRT data ranges
+2. ASIO registry list
+3. Creative report + three silent start/stop/reopen cycles
+4. post-Creative idle/BUSY re-check
+5. independent driver report + three silent start/stop/reopen cycles
+
+Output:
+
+`B5_CAPABILITY_REPORT.txt`
+
+Do not run Creative and the independent driver concurrently.
+
+## Manual build workflow
+
+Workflow:
+
+`.github/workflows/build-asio-b5-capability-arm64ec.yml`
+
+Name:
+
+`Build ASIO B5 Capability Probe ARM64EC`
+
+Trigger:
+
+`workflow_dispatch` only
+
+The workflow checks out the B5 branch, verifies validated-B4D ancestry and frozen-core equality, builds only the two ARM64EC probes, verifies final `0x8664` + `ARM64X`, and uploads:
+
+`SoundBlaster-X4-ASIO-B5-Capability-ARM64EC.zip`
+
+## Immediate action
+
+Run the manual B5 capability workflow once.
+
+If the build passes, on the X4 test system:
+
+- keep the existing validated B4D registration;
+- close REAPER and other active X4 playback first;
+- run `probe_b5.cmd` once;
+- return `B5_CAPABILITY_REPORT.txt`.
+
+If the gate reports BUSY or INDETERMINATE, do not bypass it. The probe must stop.
+
+---
+
+# After the capability report — one B5 productization batch
+
+Do not return to A/B/C/D micro-stages and do not request user testing after every internal change.
+
+Use the measured Creative + KS matrix as the specification and implement as much of the following as the matrix supports in one coherent branch cycle:
+
+1. **24-bit output** using the exact reported X4/Creative format contract.
+2. **Additional sample rates** only when confirmed by `canSampleRate()` and/or X4 KS data ranges.
+3. **Selectable ASIO buffer sizes** using the measured min/max/preferred/granularity contract while keeping 512 frames as a regression option.
+4. **Stability/lifecycle hardening** for repeated create/start/stop/dispose/reopen plus longer playback.
+5. **Narrow stereo input** first; do not mix this with broad multichannel expansion.
+6. **Dual-target maintainability** so Classic ARM64 and ARM64EC/ARM64X share functional source where practical.
+
+Then create one combined validation package covering architecture, registration/COM, capability, playback formats/buffers, lifecycle stress, and input.
+
+## Immutable safety rule
 
 Never bypass BUSY.
 
-Never intentionally reproduce the old ungated green-screen collision.
+Never intentionally reproduce the historical active-render green-screen collision.
 
-The previous failure class was:
+Known failure class:
 
 - `WDF_VIOLATION 0x10D`
 - Parameter 1 = 5
-- stale/destroyed `WDFUSBPIPE` reused in `usbaudio2` recovery
+- stale/destroyed `WDFUSBPIPE` path observed in `usbaudio2` recovery
 
-The current coexistence gate is mandatory for every new format/rate/input path unless new evidence proves a different safe ownership model.
+Every new output format/rate/buffer path must retain the local/global ownership gate before pin creation. Input work must establish and respect its own relevant pin ownership state rather than weakening the render gate.
 
-# Defer until B5 core is complete
+## Defer until core B5 is stable
 
 - broad multichannel output
 - direct monitoring
@@ -231,12 +167,11 @@ The current coexistence gate is mandatory for every new format/rate/input path u
 - MMCSS/AVRT tuning without measurement evidence
 - custom kernel driver
 - Creative runtime dependencies
-- broader CTCDC feature work
+- broader CTCDC work
 
-# Relevant runtime records
+## Read before continuing B5
 
-Read before B5 work:
-
+- `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_PROBE_IMPLEMENTED.md`
 - `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
 - `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
 - `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_TIME_INFO_RUNTIME_SUCCESS.md`
