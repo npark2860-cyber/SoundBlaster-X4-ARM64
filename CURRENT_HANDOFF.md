@@ -12,10 +12,6 @@ Default branch:
 
 `main`
 
-Verified `main` immediately before this handoff update:
-
-`2e8272d867ceac914e865cfa3621010148fee09c`
-
 Validated B4D source:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
@@ -26,17 +22,17 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@de87abca5540a077e5a9d9bf9708738ccbefecd5`
+`exp/windows-arm64-asio-b5-capability-productization@60de28df150776eb8ff60ebb74d0c84483903f79`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
-3. `NEXT_ACTION_ASIO.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_PROBE_IMPLEMENTED.md`
+2. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
+4. `NEXT_ACTION_ASIO.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
 6. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
 7. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
 8. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
@@ -50,16 +46,14 @@ CTCDC remains deferred until the B5 first-release ASIO pass is closed.
 
 Independent B4D real playback in REAPER ARM64EC remains hardware/user proven.
 
-B4D known-good transport:
+Known-good B4D:
 
 - 48 kHz
 - stereo output
 - signed 16-bit PCM
 - 512 ASIO frames
-- X4 `msft_wave`, Render Pin 1
-- WaveRT cyclic buffer 4096 bytes
-- NotificationCount=2
-- local + global ownership gates
+- Render Pin 1
+- local + global BUSY gates
 - joined worker stop
 - ASIO 2.x time-info
 
@@ -67,124 +61,106 @@ Do not modify validated B4D unless a concrete B5 regression requires it.
 
 ---
 
-# B5 capability capture — FULL PASS
+# B5 capability/reference — FULL PASS
 
-The clean combined capability report completed with:
+Clean combined capability report completed with:
 
 `B5 COMBINED CAPABILITY PROBE RESULT: PASS`
 
-Initial Render Pin 1 gate:
-
-- `C 0/1`
-- `G 0/1`
-- BUSY = NO
-
-Creative `SB USB RT ASIO` measured contract:
+Creative measured contract:
 
 - 2 inputs / 10 outputs
-- every channel `Int24LSB` type 17
-- buffer min 96 / max 4800 / preferred 240 / granularity 48
-- supported rates 48 / 96 / 192 kHz only
-- one `Internal Clock`
-- latency at preferred buffer 240 in / 240 out
+- all channels `Int24LSB` type 17
+- buffer 96..4800 / preferred 240 / granularity 48
+- 48 / 96 / 192 kHz
+- Internal Clock
+- preferred latency 240 in / 240 out
 - time-info supported
-- create/start/stop/dispose/reopen x3 PASS
+- lifecycle x3 PASS
 
-X4 static KS ranges:
+X4 KS evidence:
 
 - Render Pin 1: 2/6/8ch, 16/24-bit, 48/96/192 kHz
 - Capture Pin 4: stereo, 16/24-bit, 48/96 kHz
 
-Independent B4D also re-passed three lifecycle cycles in the same report.
+Independent B4D also re-passed lifecycle x3.
 
 ---
 
 # B5 productization implementation
 
-B5 productization was implemented on the same branch in one bundled cycle rather than A/B/C/D user micro-tests.
+Current B5:
 
-Current B5 branch:
+`60de28df150776eb8ff60ebb74d0c84483903f79`
 
-`de87abca5540a077e5a9d9bf9708738ccbefecd5`
+B5 remains descended from validated B4D with:
 
-B5 is ahead of validated B4D with B4D as merge base. Frozen B4D core source remains unchanged.
+- ahead: 18
+- behind: 0
+- merge base: `a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-Validation identity is side-by-side:
+Validated B4D core files remain untouched.
+
+B5 side-by-side identity:
 
 `Sound Blaster X4 ARM64 ASIO B5`
 
-with a separate CLSID, so the proven B4D ASIO registration remains available during validation.
+Implemented narrow contract:
 
-Implemented narrow B5 contract:
-
-- 2 output channels
-- 2 input channels at 48/96 kHz
-- `Int24LSB` host format
+- 2 outputs, `Int24LSB`
+- 2 inputs at 48/96 kHz
 - output 48/96/192 kHz
-- 192 kHz exposes zero inputs because Capture Pin 4 does not advertise 192 kHz
-- buffers 96..4800, 48-frame granularity, preferred 240
-- 512 accepted as a compatibility exception
+- 192 kHz exposes zero input channels
+- buffers 96..4800 / step 48 / preferred 240
+- 512 compatibility exception
 - Internal Clock
-- ASIO 2.x time-info retained
+- ASIO 2.x time-info
 - Render Pin 1 + Capture Pin 4 WaveRT
 - full-duplex capture-start-before-render ordering
-- input-only capture callback path
-- Classic ARM64 and ARM64EC share functional `driver_b5.cpp` / `wavert_engine_b5.cpp`
+- Classic ARM64 + ARM64EC shared functional source
 
-## Safety remains immutable
+Safety remains immutable:
 
-Never bypass BUSY.
+- Render Pin 1 local/global preflight at `init()`
+- Render Pin 1 re-check immediately before render `KsCreatePin`
+- Capture Pin 4 re-check immediately before capture `KsCreatePin`
+- joined worker before hardware teardown
 
-B5 preserves:
-
-1. Render Pin 1 local/global preflight at ASIO `init()`;
-2. Render Pin 1 local/global re-check immediately before render `KsCreatePin`;
-3. Capture Pin 4 local/global re-check immediately before capture `KsCreatePin`;
-4. mandatory joined worker before hardware teardown.
-
-Historical collision class must never be intentionally reproduced:
-
-- `WDF_VIOLATION 0x10D`
-- Parameter 1 = 5
-- stale/destroyed `WDFUSBPIPE` recovery path
+Never bypass BUSY and never intentionally reproduce historical `WDF_VIOLATION 0x10D`, Parameter 1 = 5.
 
 ---
 
-# Current validation status
+# Latest compile status
 
-The capability/reference capture is proven.
+First `Build ASIO B5 Productization` build reached B5 ARM64EC code but failed before linking because of Windows SDK source compatibility:
 
-The new B5 productized transport is **implemented but not yet compile/runtime proven**.
+- `_countof` unavailable in adapted shared WaveRT source
+- SDK 10.0.26100.0 `KSRTAUDIO_GETREADPACKET_INFO` member is `PerformanceCounterValue`, not `PerformanceCount`
+- C4324 warning from intentional 64-byte aligned host buffers
 
-Manual workflow on `main`:
+Fix is implemented on the same B5 branch:
 
-`.github/workflows/build-asio-b5-productization.yml`
+- ARM64EC WaveRT adapter supplies compatibility definitions
+- Classic ARM64 WaveRT adapter added with the same definitions
+- Classic CMake uses that adapter
+- C4324 suppressed only for B5 driver targets
 
-Workflow name:
-
-`Build ASIO B5 Productization`
-
-It builds and architecture-checks:
-
-- ARM64EC/ARM64X B5 DLL + tools
-- Classic ARM64 B5 DLL from the same functional source
-
-and packages:
-
-`SoundBlaster-X4-ASIO-B5-Productization.zip`
+This fix has **not yet received compile PASS evidence**.
 
 ---
 
 # Immediate next action
 
-1. Run `Build ASIO B5 Productization` once.
-2. If compile fails, fix on the same B5 branch; do not ask for hardware micro-tests.
-3. After Actions PASS, download the productization ZIP.
-4. With other X4 playback closed/default output moved away if necessary, run `install_and_validate_b5.cmd` once.
-5. Return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+Re-run manual workflow:
 
-The one script covers registration, idle gate, public contract, preferred/min/max/512 buffers, 48/96/192 output, 48/96 full duplex, and repeated lifecycle.
+`Build ASIO B5 Productization`
 
-If the initial gate is BUSY/indeterminate, it stops before lifecycle work and must not be overridden.
+The checkout ref is the B5 branch, so the rebuild should check out:
 
-Only after the bundled runtime report passes should one final REAPER B5 real-use validation cover audible output + stereo input as a single combined test.
+`60de28df150776eb8ff60ebb74d0c84483903f79`
+
+If it fails, inspect logs and fix all remaining compile/link issues on this same branch without hardware micro-tests.
+
+After Actions PASS, run the packaged `install_and_validate_b5.cmd` once and return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+
+Only after that bundled silent runtime PASS should one final REAPER validation cover audible output + stereo input together.
