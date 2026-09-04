@@ -1,0 +1,61 @@
+name: Build X4 CTCDC Direct Mode One-Shot ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 CTCDC Direct Mode One-Shot
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout reproduced one-shot source
+        uses: actions/checkout@v4
+        with:
+          ref: poc/windows-arm64-ctcdc-direct-mode-one-shot
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/x4-direct-mode-one-shot -B build/x4-direct-mode-one-shot -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release
+        shell: pwsh
+        run: |
+          cmake --build build/x4-direct-mode-one-shot --config Release --parallel
+
+      - name: Verify ARM64 PE and stage one-click package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/x4-direct-mode-one-shot/Release/x4-direct-mode-one-shot.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-direct-mode-one-shot.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-direct-mode-one-shot.exe
+          Copy-Item src/x4-direct-mode-one-shot/RUN-DIRECT-MODE-ON.cmd dist/RUN-DIRECT-MODE-ON.cmd
+          Copy-Item src/x4-direct-mode-one-shot/RUN-DIRECT-MODE-OFF.cmd dist/RUN-DIRECT-MODE-OFF.cmd
+          Copy-Item src/x4-direct-mode-one-shot/README.md dist/README.md
+
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+
+      - name: Upload one-click package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-CTCDC-Direct-Mode-One-Shot-ARM64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
