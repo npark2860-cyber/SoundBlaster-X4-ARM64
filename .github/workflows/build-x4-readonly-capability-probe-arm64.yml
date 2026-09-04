@@ -29,25 +29,27 @@ jobs:
       - name: Verify ARM64 PE and package
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
-          if (-not (Test-Path $exe)) {
-            throw "x4-control-readonly-probe.exe was not produced"
-          }
-
-          $bytes = [System.IO.File]::ReadAllBytes($exe)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0xAA64) {
-            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          $cap = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
+          $challenge = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-ctcdc-challenge-capture.exe"
+          foreach ($exe in @($cap, $challenge)) {
+            if (-not (Test-Path $exe)) { throw "Missing executable: $exe" }
+            $bytes = [System.IO.File]::ReadAllBytes($exe)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Expected ARM64 PE machine 0xAA64 for {0}, got 0x{1:X4}" -f $exe, $machine)
+            }
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $exe dist/x4-control-readonly-probe.exe
+          Copy-Item $cap dist/x4-control-readonly-probe.exe
+          Copy-Item $challenge dist/x4-ctcdc-challenge-capture.exe
           Copy-Item src/x4-control-readonly-probe/README.md dist/README.md
-          Compress-Archive -Path dist/x4-control-readonly-probe.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Force
+          Compress-Archive -Path dist/x4-control-readonly-probe.exe,dist/x4-ctcdc-challenge-capture.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Force
 
-          "ARM64 PE verified: 0xAA64"
-          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "ARM64 PE verified: both executables are 0xAA64"
+          "Capability EXE SHA256: $((Get-FileHash $cap -Algorithm SHA256).Hash)"
+          "Challenge EXE SHA256: $((Get-FileHash $challenge -Algorithm SHA256).Hash)"
           "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Algorithm SHA256).Hash)"
 
       - name: Upload probe ZIP
