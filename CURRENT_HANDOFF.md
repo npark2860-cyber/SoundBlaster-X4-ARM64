@@ -18,7 +18,7 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@a62df8395888298a4be96c7cf14ed782d905e188`
+`exp/windows-arm64-asio-b5-capability-productization@c9ca17171edcc3eb1b6e2c7e2e36173cb3f66c0f`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
@@ -256,7 +256,8 @@ Implementation commits:
 
 - exact diagnostics: `dc1b16adb7788f27443be9efeb3bdc56ad51536d`
 - cadence mode: `e6d2a54dfd8a9f3072be749f2c7633c0a1ccddac`
-- runner/current B5 HEAD: `a62df8395888298a4be96c7cf14ed782d905e188`
+- runner: `a62df8395888298a4be96c7cf14ed782d905e188`
+- current B5 HEAD including README documentation: `c9ca17171edcc3eb1b6e2c7e2e36173cb3f66c0f`
 
 The normal matrix was reordered so `reaper-48-480-output` runs before the 192 kHz case; therefore the actual REAPER 48k/480 geometry will no longer be hidden by a later 192 kHz failure.
 
