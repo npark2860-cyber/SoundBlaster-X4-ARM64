@@ -20,7 +20,7 @@ Immutable safety:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@d84ed0e7f8f5c4402b44d577140a4780b2aa0bf3`
+`exp/windows-arm64-asio-b5-capability-productization@127ca482ef18575ce4dc69d03d41a5a01287e992`
 
 Runtime/build marker:
 
@@ -43,13 +43,13 @@ PASS:
 
 96k duplex now stops cleanly with no strict packet/index/copy errors. Capture still trails render (`capturePhaseMisses=27/23`), so exact duplex cadence is not yet closed, but mux-v2's false synchronization failure is fixed.
 
-New failure:
+New runtime failure:
 
 `B5 RENDER BUFFER_WITH_NOTIFICATION FAILED Win32=87 requested=2880`
 
 at 192k/240 output during `createBuffers()`, before worker creation or KSSTATE_RUN.
 
-This moves the immediate blocker from scheduling to 192 kHz WaveRT buffer geometry.
+This moves the immediate runtime blocker from scheduling to 192 kHz WaveRT buffer geometry.
 
 See:
 
@@ -57,9 +57,9 @@ See:
 
 ---
 
-# Measurement tool now implemented
+# Measurement tool
 
-New ARM64EC target:
+ARM64EC target:
 
 `x4-asio-stage-b5-192k-geometry-probe`
 
@@ -82,9 +82,35 @@ The main productization workflow builds and packages this probe but does not exe
 
 ---
 
+# Latest build status — geometry probe compile fix
+
+The first workflow build containing the new geometry probe compiled and linked all existing ARM64EC B5 targets, then failed only in `geometry_probe_b5_arm64ec.cpp` with:
+
+`error C3861: '_countof': identifier not found`
+
+The failing call was:
+
+`find_x4_wave_path(path, _countof(path))`
+
+This was isolated to the new helper and has no runtime meaning.
+
+Fixed on the same B5 branch by replacing the macro dependency with:
+
+`constexpr size_t path_chars = sizeof(path) / sizeof(path[0]);`
+
+and passing `path_chars`.
+
+See:
+
+`DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_PROBE_COMPILE_FIX.md`
+
+No WaveRT runtime logic, mux-v3 behavior, BUSY gate, ownership rule, product contract, or validated B4D source changed.
+
+---
+
 # Immediate action
 
-Run manual workflow:
+Re-run manual workflow:
 
 `Build ASIO B5 Productization`
 
