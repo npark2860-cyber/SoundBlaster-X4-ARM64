@@ -21,7 +21,7 @@ Immutable safety:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@a62df8395888298a4be96c7cf14ed782d905e188`
+`exp/windows-arm64-asio-b5-capability-productization@c9ca17171edcc3eb1b6e2c7e2e36173cb3f66c0f`
 
 Runtime/build markers:
 
