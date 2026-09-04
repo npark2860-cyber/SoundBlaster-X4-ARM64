@@ -240,19 +240,60 @@ int run_case(const TestCase& tc) {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(co)) {
         std::printf("B5 VALIDATION CoInitializeEx=0x%08lX FAIL\n", static_cast<unsigned long>(co));
         return 2;
     }
 
+    if (argc == 2 && std::strcmp(argv[1], "--cadence-192") == 0) {
+        // Strict RUN-state cadence probe. This intentionally uses the normal B5
+        // fatal packet-discontinuity checks; it does not relax or mask them.
+        // 384 frames is the measured 2.0 ms allocation minimum. The larger
+        // candidates determine the first sustained notification period that is
+        // stable on the public msft_wave/usbaudio2 path.
+        const TestCase cadence_cases[] = {
+            {"cadence-192-384", 192000.0, 384, false, 1, 5000},
+            {"cadence-192-432", 192000.0, 432, false, 2, 10000},
+            {"cadence-192-480", 192000.0, 480, false, 2, 10000},
+            {"cadence-192-576", 192000.0, 576, false, 2, 10000},
+        };
+
+        int first_failure = 0;
+        for (const auto& tc : cadence_cases) {
+            const int candidate_result = run_case(tc);
+            std::printf(
+                "B5 192K CADENCE CANDIDATE frames=%ld periodMs=%.3f result=%s code=%d\n",
+                tc.frames,
+                (static_cast<double>(tc.frames) * 1000.0) / tc.rate,
+                candidate_result == 0 ? "PASS" : "FAIL",
+                candidate_result);
+            if (candidate_result == 10) {
+                first_failure = 10;
+                break;
+            }
+            if (candidate_result != 0 && first_failure == 0) {
+                first_failure = candidate_result;
+            }
+            Sleep(250);
+        }
+
+        CoUninitialize();
+        std::printf(
+            "B5 192K CADENCE PROBE RESULT: %s code=%d\n",
+            first_failure == 0 ? "ALL_PASS" :
+            (first_failure == 10 ? "BUSY_BLOCKED" : "SOME_CANDIDATES_FAILED"),
+            first_failure);
+        return first_failure;
+    }
+
     const TestCase cases[] = {
         {"preferred-48-output", 48000.0, 240, false, 3, 700},
         {"preferred-48-duplex", 48000.0, 240, true, 2, 700},
         {"preferred-96-duplex", 96000.0, 240, true, 2, 700},
-        {"preferred-192-output", 192000.0, 384, false, 2, 700},
         {"reaper-48-480-output", 48000.0, 480, false, 1, 5000},
+        {"preferred-192-output", 192000.0, 384, false, 2, 700},
         {"minimum-48-output", 48000.0, 96, false, 1, 500},
         {"maximum-48-output", 48000.0, 4800, false, 1, 900},
         {"b4d-512-compat", 48000.0, 512, false, 1, 700},
