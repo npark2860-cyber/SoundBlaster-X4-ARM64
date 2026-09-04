@@ -252,6 +252,7 @@ int main() {
         {"preferred-48-duplex", 48000.0, 240, true, 2, 700},
         {"preferred-96-duplex", 96000.0, 240, true, 2, 700},
         {"preferred-192-output", 192000.0, 384, false, 2, 700},
+        {"reaper-48-480-output", 48000.0, 480, false, 1, 5000},
         {"minimum-48-output", 48000.0, 96, false, 1, 500},
         {"maximum-48-output", 48000.0, 4800, false, 1, 900},
         {"b4d-512-compat", 48000.0, 512, false, 1, 700},
