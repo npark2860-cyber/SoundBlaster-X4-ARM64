@@ -1,0 +1,86 @@
+name: Build ASIO B5 Control Panel Rebasing Check
+
+on:
+  push:
+    branches:
+      - exp/windows-arm64-asio-b5-control-panel
+    paths:
+      - .github/workflows/build-asio-b5-control-panel-rebased.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout control-panel source
+        uses: actions/checkout@v6
+        with:
+          ref: exp/windows-arm64-asio-b5-control-panel
+          fetch-depth: 0
+
+      - name: Verify validated runtime base and isolated diff
+        shell: pwsh
+        run: |
+          $base = "4475fc17b70f372fe317fa201f201e8dc5543f9f"
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE -ne 0) { throw "Not based on validated productization HEAD $base" }
+          $allowed = @(
+            ".github/workflows/build-asio-b5-control-panel-rebased.yml",
+            "src/asio-arm64-stage-b0/CMakeLists.txt",
+            "src/asio-arm64-stage-b0/control_panel_b5.cpp",
+            "src/asio-arm64-stage-b0/control_panel_b5.h",
+            "src/asio-arm64-stage-b0/driver_b5.cpp",
+            "src/asio-arm64-stage-b5-classic/CMakeLists.txt"
+          )
+          $changed = @(git diff --name-only $base HEAD)
+          $unexpected = @($changed | Where-Object { $_ -notin $allowed })
+          if ($unexpected.Count -gt 0) { $unexpected | % { Write-Host $_ }; throw "Unexpected non-control-panel diff" }
+
+      - name: Configure ARM64EC B5
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b0 -B build/asio-b5-arm64ec -G "Visual Studio 17 2022" -A ARM64EC
+
+      - name: Build ARM64EC B5 DLL
+        shell: pwsh
+        run: cmake --build build/asio-b5-arm64ec --config Release --target x4-asio-arm64ec-b5 --parallel
+
+      - name: Configure Classic ARM64 B5
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b5-classic -B build/asio-b5-arm64 -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Classic ARM64 B5 DLL
+        shell: pwsh
+        run: cmake --build build/asio-b5-arm64 --config Release --target x4-asio-arm64-b5 --parallel
+
+      - name: Verify PE and validated runtime markers
+        shell: pwsh
+        run: |
+          $ec = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll"
+          $classic = Join-Path $PWD "build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll"
+          foreach ($f in @($ec,$classic)) { if (-not (Test-Path $f)) { throw "Missing $f" } }
+          function Get-Machine([string]$file) {
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $pe = [BitConverter]::ToInt32($bytes,0x3C)
+            [BitConverter]::ToUInt16($bytes,$pe+4)
+          }
+          if ((Get-Machine $ec) -ne 0x8664) { throw "ARM64EC machine mismatch" }
+          if ((Get-Machine $classic) -ne 0xAA64) { throw "Classic ARM64 machine mismatch" }
+          foreach ($f in @($ec,$classic)) {
+            $ascii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($f))
+            foreach ($marker in @("dual-event-mux-v4-coalesce-recovery","runtime-failsafe-v1","packet-stats-observed-v1","post-coalesce-stale-v1")) {
+              if ($ascii -notmatch [regex]::Escape($marker)) { throw "Missing runtime marker $marker in $f" }
+            }
+          }
+
+      - name: Upload only corrected driver DLLs
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-B5-Control-Panel-Rebased
+          path: |
+            build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll
+            build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll
+          if-no-files-found: error
+          retention-days: 14
