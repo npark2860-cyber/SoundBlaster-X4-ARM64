@@ -16,34 +16,67 @@ Validated Classic ARM64 B4C:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info@e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
 
-Current B5 branch HEAD:
+## B5 state — keep these two references distinct
+
+### Last runtime-validated B5 reference
+
+`ca37f0e8427227733cd6082a50e20101312e3333`
+
+This is the build that actually produced the returned 2026-09-04 16:16 product report and was subsequently used by the user in REAPER without a playback problem.
+
+Measured on that built bundle:
+
+- `B5 INSTALL + PRODUCT VALIDATION: PASS`
+- 48k/240 output x3 PASS
+- 48k/240 duplex x2 PASS
+- 96k/240 duplex x2 PASS
+- REAPER-matched 48k/480 output for 5 s: 500 callbacks, stop=0, workerJoined=YES
+- 192k/384 output x2 PASS
+- 48k/96 PASS
+- 48k/4800 PASS
+- 48k/512 compatibility PASS
+- ASIO capability probe PASS
+- user then performed ordinary REAPER playback and explicitly reported no problem
+
+Do not describe the earlier loud sustained drone/buzz as still reproducing on this validated build. It motivated the fail-safe work, but the user's latest real REAPER observation on the validated bundle was normal playback.
+
+### Current B5 branch HEAD — newer but not runtime-validated yet
 
 `exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
 
-Latest runtime-code commit:
+Latest runtime-code commit on that branch:
 
 `64e34b48714789ab17fba57be34b054f2170b4e9`
 
-The branch HEAD after that runtime-code commit only updates `README_B5_PRODUCTIZATION.md`.
+The later branch HEAD only updates `README_B5_PRODUCTIZATION.md`.
 
-At a later chat start, verify actual GitHub branch/main HEADs again. Do not reconstruct state from conversation memory.
+The post-`ca37f0e` runtime delta adds narrow handling for an immediately repeated Render PACKETCOUNT wake after a successfully recovered `delta=2` coalesce. Runtime/build marker:
 
-## Read order
+`post-coalesce-stale-v1`
 
-1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V4_STATS_ALIAS_REGRESSION.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_48K_RENDER_COALESCE_RECOVERY_V4.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_REAPER_BUZZ_RUNTIME_FAILSAFE_V1.md`
-6. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
-7. `NEXT_ACTION_ASIO.md`
-8. older histories only as needed
+**This newer stale-wake patch has not been built or runtime-validated yet.** Never call it proven. Do not make control-panel work depend on it.
 
-CTCDC/CTIntrfu remains deferred until B5 first-release ASIO product surface and host-level validation are closed.
+At the start of a later chat, verify actual GitHub main/branch HEADs again. GitHub is source of truth; do not reconstruct state from conversation memory.
 
 ---
 
-# Immutable safety
+# Read order for the control-panel continuation
+
+1. `CURRENT_HANDOFF.md`
+2. `NEXT_ACTION_ASIO_CONTROL_PANEL.md`
+3. `PROMPT_ASIO_CONTROL_PANEL.md`
+4. `NEXT_ACTION_ASIO.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V4_STATS_ALIAS_REGRESSION.md`
+7. `DEBUG_HISTORY_20260904_ASIO_B5_REAPER_BUZZ_RUNTIME_FAILSAFE_V1.md`
+8. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
+9. older histories only as needed
+
+CTCDC/CTIntrfu remains deferred until the B5 first-release ASIO product surface and host-level validation are closed.
+
+---
+
+# Immutable runtime safety
 
 Never bypass BUSY.
 
@@ -60,15 +93,17 @@ Historical collision class must never be intentionally reproduced:
 - Parameter 1 = 5
 - stale/destroyed `WDFUSBPIPE` recovery path
 
-Never weaken render position, callback-index, render/capture copy, capture packet integrity, or joined-worker checks merely to make validation pass.
+Never weaken render position, callback-index, render/capture copy, capture packet integrity, worker-join, or unrecoverable packet checks merely to make validation pass.
 
 `runtime-failsafe-v1` may overwrite Render cyclic contents with silence on a fatal worker path but must never stop/close/dispose pins from the worker itself.
 
 Validated B4D remains frozen.
 
+Control-panel work must not refactor or cosmetically clean the validated WaveRT/mux path.
+
 ---
 
-# B5 public contract
+# B5 public ASIO contract
 
 Channels/sample type:
 
@@ -90,207 +125,108 @@ Other:
 - Render Pin 1 + Capture Pin 4 WaveRT
 - NotificationCount=2
 
-The allocation-only 192 kHz geometry probe has repeatedly confirmed:
+Allocation-only 192 kHz geometry is already established:
 
 - 48..336 rejected with Win32 87
 - 384 first accepted
 - 432..960 accepted
 - accepted requests return exact requested buffer size
 
-Do not raise the 192 kHz minimum merely to hide notification behavior.
+Do not rerun geometry without contradictory evidence and do not raise the 192 kHz minimum merely to hide notification behavior.
 
 ---
 
-# Current runtime/build markers
+# Current driver facts relevant to the control panel
 
-Both ARM64EC and Classic ARM64 DLLs must contain:
+Control-panel implementation target is `src/asio-arm64-stage-b0/driver_b5.cpp` plus narrowly scoped new shared panel source/header files if needed.
 
-- `dual-event-mux-v4-coalesce-recovery`
-- `runtime-failsafe-v1`
-- `packet-stats-observed-v1`
-- `post-coalesce-stale-v1`
+Current facts from the validated `ca37f0e` source:
 
-The manual productization workflow enforces all four markers. Push/PR auto-builds remain disabled; `workflow_dispatch` is retained.
+- `ASIOError controlPanel() override { return ASE_NotPresent; }`
+- `HMODULE g_module` already exists and is assigned in `DllMain(DLL_PROCESS_ATTACH)`
+- `init(void* sysHandle)` currently discards `sysHandle`; if an owner window is desired, inspect ASIO/host semantics before retaining it rather than assuming blindly
+- `setSampleRate()` already rejects changes while buffers/worker/RUN are active
+- `createBuffers()` rejects invalid rate-specific sizes and already-created/prepared buffers
+- `createBuffers()` stores the host-provided `bufferSize` in `buffer_frames_`
+- `createBuffers()` stores `callbacks_ = *callbacks`
+- `disposeBuffers()` clears `callbacks_`
+- `getLatencies()` reports the active `buffer_frames_` when buffers exist, otherwise the rate-specific preferred value
+- `getBufferSize()` currently reports fixed rate-specific preferred values
 
----
+Important ASIO semantic constraint for panel design:
 
-# Real REAPER regression that started the runtime work
+The host supplies the actual `bufferSize` argument to `createBuffers()`. The panel must not silently override an explicit host-provided buffer size. A panel-selected latency/buffer value therefore needs a deliberate next-open/preferred/reset/reopen contract rather than hidden substitution inside `createBuffers()`.
 
-REAPER ARM64EC showed B5 active at:
-
-- 48 kHz
-- 24-bit
-- 2 in / 2 out
-- 480 samples
-- about 10 ms in / 10 ms out
-
-During actual playback the output became a loud sustained drone/buzz while REAPER itself remained alive and left no useful log.
-
-The prior fatal path could leave WaveRT RUN with stale cyclic audio repeating. `runtime-failsafe-v1` now snapshots diagnostics, zeroes both render slots first, then writes `%TEMP%\B5_RUNTIME_FAILURE.txt` / OutputDebugString. Captured failures have directly shown `emergencySilence=OK`.
+Any `kAsioResetRequest` use must be designed only after checking callback lifetime and reentrancy. Do not fire host callbacks casually from a modal dialog or while teardown is in progress.
 
 ---
 
-# Render notification diagnosis
+# Native ASIO control panel — immediate product milestone
 
-A strict 48 kHz / 240 run recorded:
+The user is moving control-panel work to a fresh chat now. This milestone no longer waits for another REAPER retest because the currently built/validated `ca37f0e` bundle already passed the product matrix and the user's ordinary REAPER playback test.
 
-`previous=74 expected=75 current=76 delta=2`
-
-Earlier 192 kHz runs showed the same +2 pattern, proving it is not primarily a 192 kHz minimum-period issue.
-
-Mux-v4 therefore treats exactly one forward Render `delta == 2` as an explicit one-block xrun/coalesced notification:
-
-1. synthesize the missing ASIO callback to preserve host double-buffer/sample timeline;
-2. discard that already-late block's output;
-3. run the current callback normally;
-4. write only to the next future WaveRT packet;
-5. continue streaming.
-
-Duplicate/backward/larger Render jumps remain fatal unless covered by the one narrow post-coalesce stale-wake rule below. Capture discontinuity remains fatal.
-
----
-
-# First mux-v4 software regression — fixed
-
-The first mux-v4 build failed after one callback even though engine packet/position counters were clean.
-
-Root cause: external `stats().last_packet` had been polluted by Render write-ahead N+1 writes.
-
-Fix:
-
-- `stats()` now exposes the last packet actually observed from PACKETCOUNT/GETREADPACKET;
-- write-ahead target statistics no longer masquerade as completed hardware packet state;
-- marker `packet-stats-observed-v1` added.
-
-Relevant commits:
-
-- `4acfadfc4131172d65e1877480b242c85c1416ce`
-- `ca37f0e8427227733cd6082a50e20101312e3333`
-
----
-
-# Latest product validation — PASS
-
-Report generated `2026-09-04 16:16:13.09`:
-
-`B5 INSTALL + PRODUCT VALIDATION: PASS`
-
-Passed:
-
-- 48k/240 output x3
-- 48k/240 duplex x2
-- 96k/240 duplex x2
-- REAPER-matched 48k/480 output for 5 seconds: 500 callbacks, stop=0, workerJoined=YES
-- 192k/384 output x2
-- 48k/96
-- 48k/4800
-- 48k/512 compatibility
-- ASIO capability probe
-
-96k duplex still shows roughly 27 capture phase misses in the short silent window, with no strict packet/index/copy failure. Do not cosmetically hide this; real-signal input validation is still required later.
-
----
-
-# Latest cadence evidence — post-coalesce stale wake
-
-The dedicated 192 kHz cadence run reproduced a real +2 and proved the first recovery step itself works.
-
-At 432 frames:
-
-`1941 -> 1943`
-
-was recovered:
-
-`B5 RENDER COALESCE RECOVERED previous=1941 missed=1942 current=1943 droppedBlocks=1`
-
-The immediately following render wake then returned the same current PACKETCOUNT:
-
-`1943 -> 1943`
-
-and the old strict duplicate rule killed the worker.
-
-The same pattern occurred at 480 frames:
-
-`3485 -> 3487` recovered, then `3487 -> 3487` fatal.
-
-384 passed its 5-second cadence cycle. 576 passed both 10-second cycles. These rate/frame differences are diagnostic only and do not justify changing the allocation contract.
-
-See:
-
-`DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
-
----
-
-# Implemented one-shot post-coalesce stale-wake fix
-
-Latest runtime-code commit:
-
-`64e34b48714789ab17fba57be34b054f2170b4e9`
-
-New rule:
-
-- only after a successful forward Render `delta == 2` recovery, arm exactly one stale-wake allowance;
-- if the immediately following render wake returns the same PACKETCOUNT, classify it as `post-coalesce-stale-v1`;
-- issue no ASIO callback;
-- perform no Render write;
-- do not advance callback/sample timeline or hardware-notification stats;
-- increment worker diagnostic `renderStaleWakes`;
-- clear the allowance and continue waiting.
-
-If the next wake advances normally, the allowance is simply cleared.
-
-Still fatal:
-
-- any unarmed duplicate
-- a second duplicate after the consumed stale wake
-- backward Render packet
-- Render delta >2
-- Capture packet discontinuity
-- render position regression
-- callback-index/copy/staging/join failure
-
-Touched only:
-
-- `src/asio-arm64-stage-b0/wavert_engine_b5.h`
-- `src/asio-arm64-stage-b0/wavert_engine_b5_signaled.inl`
-- `src/asio-arm64-stage-b0/driver_b5_mux_adapter.inl`
-
-B4D core remains untouched.
-
----
-
-# Immediate next action
-
-1. run manual `Build ASIO B5 Productization` on current B5 branch HEAD;
-2. require ARM64EC + Classic ARM64 compile/link PASS and all four markers;
-3. install the new ZIP with all other X4 clients closed;
-4. **do not rerun geometry**;
-5. run `probe_b5_192k_cadence.cmd` once because it directly reproduced the stale-wake edge case;
-6. return `B5_192K_CADENCE_REPORT.txt`;
-7. desired evidence if +2 occurs: coalesce recovered, optional stale wake consumed, no worker fatal, strict counters zero, stop=0 / workerJoined=YES;
-8. if cadence passes, run `install_and_validate_b5.cmd` once as final shared-worker regression;
-9. then perform one normal REAPER 48k/480 audible playback test;
-10. if fatal occurs, stop retries and return `%TEMP%\B5_RUNTIME_FAILURE.txt` immediately.
-
----
-
-# ASIO control panel — still binding next product milestone
-
-After runtime closure, resume the native control panel. Current driver still has:
-
-`ASIOError controlPanel() override { return ASE_NotPresent; }`
+The pending `post-coalesce-stale-v1` branch delta remains a separate runtime-validation item and must not be silently promoted to validated state by control-panel work.
 
 Required first-release panel:
 
-- own native Win32 UI; no Creative binary reuse
-- `IASIO::controlPanel()` entry point
-- current/effective sample rate and active buffer
-- buffer/latency frames + ms
-- sample-rate-aware limits, including 192 kHz min/preferred 384 and 512 compatibility
-- no WaveRT pin creation merely from opening panel
-- no live geometry mutation while buffers/RUN active
-- deterministic Apply/OK/Cancel
-- safe persistence / host reset-reopen behavior
-- lightweight diagnostics/save-report support
+- own native Win32 UI; no Creative control-panel binary reuse
+- compact, credible production UI rather than a debug form
+- opened through `IASIO::controlPanel()`
+- identity: `Sound Blaster X4 ARM64 ASIO B5`
+- current/effective sample rate display
+- current/effective buffer display
+- latency/buffer selection with frames and milliseconds
+- 48/96 limits: 96..4800, granularity 48, default/preferred 240
+- 192 limits: 384..4800, granularity 48, default/preferred 384
+- 512 compatibility selectable
+- if host currently has e.g. 480 frames active, display 480 as the effective current buffer; do not misleadingly show 240 as current
+- opening the panel must not create WaveRT pins
+- opening the panel must not probe hardware aggressively
+- no live geometry mutation while ASIO buffers or RUN are active
+- deterministic Apply / OK / Cancel
+- persisted user preference for the next safe reopen path
+- explicit handling of whether host reset/reopen is needed
+- lightweight diagnostics surface retained as a product feature
 
-After panel PASS, finish real output + real stereo input validation at 48/96 kHz, freeze B5 first release, then resume CTCDC/CTIntrfu static-analysis work.
+Diagnostics should stay realtime-safe:
+
+- no per-callback file writes
+- existing fatal `%TEMP%\B5_RUNTIME_FAILURE.txt` / OutputDebugString remains failure-only
+- panel may show/copy/save lightweight state such as driver version, sample rate, active buffer, worker status/last status and failure-log location
+- verbose diagnostics, if added, must be opt-in and must not put blocking file I/O in the normal callback path
+
+---
+
+# Branching guidance for the fresh control-panel tab
+
+Do not mutate the validated runtime baseline accidentally.
+
+Preferred isolation strategy:
+
+- use `ca37f0e8427227733cd6082a50e20101312e3333` as the **validated runtime reference/base** for control-panel behavior;
+- create a dedicated control-panel branch rather than mixing UI implementation into the pending stale-wake validation work;
+- suggested branch name: `exp/windows-arm64-asio-b5-control-panel`;
+- do not merge/drop/rewrite the newer stale-wake commits as part of UI work; reconcile them later as a separate, explicit merge after each side is validated.
+
+Before creating that branch, verify the current refs in GitHub and show the intended base/diff. Do not perform unrelated cleanup.
+
+---
+
+# Control-panel validation sequence
+
+First validate the panel independently from streaming:
+
+1. ARM64EC + Classic ARM64 compile/link PASS;
+2. registration side-by-side remains correct;
+3. host can invoke `controlPanel()` without crash;
+4. opening/closing/canceling the panel creates no WaveRT pins;
+5. panel shows correct current sample rate and effective buffer state;
+6. rate-specific buffer choices and 512 compatibility are enforced;
+7. Cancel changes nothing;
+8. Apply/OK persistence is deterministic;
+9. active-buffer/RUN state cannot be mutated unsafely;
+10. if a reset/reopen mechanism is implemented, validate it separately and prove no callback-lifetime/reentrancy issue.
+
+Only after panel behavior is stable, run the normal B5 product validation and one ordinary REAPER check. Do not turn panel development into another WaveRT stress campaign.
+
+After panel PASS, finish real output + real stereo input validation at 48/96 kHz, freeze the B5 first release, then resume deferred CTCDC/CTIntrfu static analysis.
