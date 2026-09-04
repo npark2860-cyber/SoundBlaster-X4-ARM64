@@ -68,3 +68,19 @@ target_link_libraries(x4-asio-stage-b4d-register PRIVATE advapi32.lib)
 set_property(TARGET x4-asio-stage-b4d-register PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_dependencies(x4-asio-stage-b4d-register x4-asio-arm64ec)
+
+add_executable(x4-asio-stage-b4d-host-probe
+  host_probe_b4d_arm64ec.cpp
+)
+target_compile_features(x4-asio-stage-b4d-host-probe PRIVATE cxx_std_17)
+target_compile_definitions(x4-asio-stage-b4d-host-probe PRIVATE
+  UNICODE
+  _UNICODE
+  _WIN32_WINNT=0x0A00
+  WINVER=0x0A00
+)
+target_compile_options(x4-asio-stage-b4d-host-probe PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+target_link_libraries(x4-asio-stage-b4d-host-probe PRIVATE ole32.lib)
+set_property(TARGET x4-asio-stage-b4d-host-probe PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_dependencies(x4-asio-stage-b4d-host-probe x4-asio-arm64ec)
