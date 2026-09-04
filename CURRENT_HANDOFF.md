@@ -14,7 +14,7 @@ Default branch:
 
 Verified `main` immediately before this handoff update:
 
-`d6d1134de1cd683bee5fbba5392d9f132f5c8453`
+`f79e9f995895b16cab537d570908d2d65ae8a875`
 
 Validated B4D source:
 
@@ -24,184 +24,133 @@ Validated Classic ARM64 B4C source:
 
 `exp/windows-arm64-asio-com-stage-b4c-time-info@e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
 
-Current B5 implementation branch:
+Current B5 measurement/productization branch:
 
 `exp/windows-arm64-asio-b5-capability-productization@bf5039e57ad0617db2e14269389f62c7e046bcb7`
 
-At the start of the next chat, verify the actual GitHub heads again. Do not reconstruct state from old conversation context.
+At the start of the next chat, verify actual GitHub heads again. Do not reconstruct state from old conversation context.
 
 ## Read order
 
-Read these first, in this order:
-
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_PROBE_IMPLEMENTED.md`
+2. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
 3. `NEXT_ACTION_ASIO.md`
-4. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
-5. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
-6. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_TIME_INFO_RUNTIME_SUCCESS.md`
-7. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_CORRECTED_SMOKE_BUSY_RUNTIME.md`
-8. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
-9. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_PROBE_IMPLEMENTED.md`
+5. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+6. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
+7. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_TIME_INFO_RUNTIME_SUCCESS.md`
+8. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4C_CORRECTED_SMOKE_BUSY_RUNTIME.md`
+9. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+10. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
 
-Only if work returns to device-control/CTCDC, then read its existing CTCDC history and `NEXT_ACTION_CTCDC.md`. CTCDC is currently deferred until the ASIO first-release capability/productization pass is closed.
+CTCDC remains deferred until the first B5 ASIO capability/productization pass is closed.
 
 ---
 
-# Current priority — ASIO B5 capability/productization
+# Proven baseline
 
-## Proven baseline
+Independent B4D real playback in REAPER ARM64EC is hardware/user proven.
 
-Real REAPER Windows ARM/ARM64EC playback through the independent ASIO driver is hardware/user proven.
-
-Known-good B4D configuration:
+Known-good transport:
 
 - 48 kHz
-- stereo output only
-- signed 16-bit PCM transport
+- stereo output
+- signed 16-bit PCM
 - 512 ASIO frames
 - X4 `msft_wave`, Render Pin 1
 - WaveRT cyclic buffer 4096 bytes
 - NotificationCount=2
-- `writePacket = PacketCount + 1`
-- slot = `writePacket % 2`
-- local + global pin-instance ownership gates
-- B4A joined worker stop
-- B4C ASIO 2.x time-info callbacks
+- local + global BUSY ownership gates
+- joined worker stop
+- ASIO 2.x time-info callbacks
 
-The validated B4D source branch remains exactly at:
+Do not modify the validated B4D source unless a concrete B5 regression requires it.
 
-`a95a95d014bcc1c3a521be41325841ae96dc8a61`
-
-Do not modify or re-prove this baseline without a concrete regression reason.
-
-## Creative behavioral reference
-
-Creative `SB USB RT ASIO` is also confirmed working in the same REAPER ARM64EC environment, including actual playback and exposed input/output channels.
-
-Use Creative only as a behavioral reference for:
-
-- channel counts/names
-- ASIO sample types
-- sample-rate support
-- buffer-size contract
-- latency reporting
-- clock sources
-- lifecycle behavior
-
-Do not copy proprietary implementation code and do not create a Creative runtime dependency.
+Creative `SB USB RT ASIO` is also proven to work in the same ARM64EC REAPER environment and is the black-box behavioral reference only.
 
 ---
 
-# B5-0 implementation state
+# B5-0 build/runtime state
 
-B5-0 measurement tooling is implemented on:
+B5 measurement tooling is implemented at:
 
-`exp/windows-arm64-asio-b5-capability-productization@bf5039e57ad0617db2e14269389f62c7e046bcb7`
+`bf5039e57ad0617db2e14269389f62c7e046bcb7`
 
-It is exactly one commit ahead of validated B4D and zero commits behind. Validated B4D is the merge base.
+The B5 Actions workflow shallow-checkout failure was fixed on main by changing checkout to full history and current checkout action. The workflow subsequently produced the packaged capability tools used for the first runtime capture.
 
-Important: **B5-0 has not yet received build/runtime PASS evidence.** It is implemented and waiting for the single capability build/capture.
+First runtime report status:
 
-Added source/tooling:
+**PARTIAL / SAFELY BUSY-BLOCKED**
 
-- `src/asio-arm64-stage-b0/capability_probe_b5_arm64ec.cpp`
-- `src/asio-arm64-stage-b0/ks_capability_probe_b5_arm64ec.cpp`
-- `src/asio-arm64-stage-b0/probe_b5.cmd`
-- `src/asio-arm64-stage-b0/README_B5_CAPABILITY.md`
-- B5 probe targets appended to `src/asio-arm64-stage-b0/CMakeLists.txt`
+The property-only KS probe completed and reported for Render Pin 1:
 
-The validated B4D transport/core files remain unchanged.
+- local `C 0/1`
+- global `G 1/1`
+- BUSY = YES
+- `KsCreatePin` never called
 
-## B5-0 capability capture
+The combined script therefore stopped before Creative and independent ASIO COM/lifecycle measurement. This is correct behavior and must not be bypassed.
 
-The combined sequence is designed to collect one report rather than repeat A/B/C/D-style user tests.
+## Static KS capability evidence captured
 
-It records:
+### Render Pin 1
 
-- ASIO registry name / CLSID / registry view
-- driver name/version
-- input/output channel counts
-- every channel name and raw sample type
-- buffer min/max/preferred/granularity
-- current sample rate and `canSampleRate()` candidate matrix
-- clock sources
-- latency reporting
-- repeated create/start/stop/dispose/reopen behavior
-- X4 KS pin count/dataflow/local+global instances
-- X4 `KSPROPERTY_PIN_DATARANGES` audio channel/bit/rate ranges
+Advertised PCM ranges include the combinations represented by:
 
-Creative is probed first. After it is released, the X4 idle gate is checked again before the independent driver is opened.
+- channels: 2 / 6 / 8
+- bits: 16 / 24
+- rates: 48 / 96 / 192 kHz
 
-Output file:
+### Capture Pin 4
 
-`B5_CAPABILITY_REPORT.txt`
+Advertised stereo PCM ranges:
 
-## Manual build workflow
+- 16-bit: 48 / 96 kHz
+- 24-bit: 48 / 96 kHz
 
-Main workflow:
+Pin 4 is the strongest current static candidate for first narrow stereo input work.
 
-`.github/workflows/build-asio-b5-capability-arm64ec.yml`
-
-Workflow name:
-
-`Build ASIO B5 Capability Probe ARM64EC`
-
-Trigger:
-
-`workflow_dispatch` only
-
-The workflow checks out the B5 branch, verifies ancestry from B4D and frozen-core equality, builds only the two B5 probes, verifies final PE `0x8664` plus `ARM64X`, and packages:
-
-`SoundBlaster-X4-ASIO-B5-Capability-ARM64EC.zip`
-
----
-
-# Immutable safety rule
-
-Never bypass BUSY.
-
-Never intentionally reproduce the old active-render green-screen collision.
-
-Known failure evidence:
-
-- active concurrent X4 playback was the differentiator;
-- `WDF_VIOLATION 0x10D`, Parameter 1 = 5;
-- stale/destroyed `WDFUSBPIPE` path was observed in `usbaudio2` recovery;
-- the validated driver refuses BUSY before `KsCreatePin` using both local and global instance state.
-
-B5-0 preserves this rule twice:
-
-1. its KS probe is property-only and contains no `KsCreatePin` call;
-2. `probe_b5.cmd` requires the known Render Pin 1 local/global gate to be FREE before lifecycle work and re-checks it after Creative release.
-
-If the gate is BUSY or indeterminate, stop. Do not override it.
+These ranges do **not** resolve the Creative ASIO sample packing, buffer contract, latency/clock behavior, or lifecycle contract.
 
 ---
 
 # Immediate next action
 
-1. Run `Build ASIO B5 Capability Probe ARM64EC` once.
-2. If build passes, keep the existing validated B4D registration, close REAPER/other X4 playback, and run the packaged `probe_b5.cmd` once.
-3. Return `B5_CAPABILITY_REPORT.txt`.
+Do not begin B5 transport implementation from this partial report.
 
-Do not implement 24-bit/rates/buffers/input by assumption before this report.
+Make the X4 Render Pin 1 globally idle and run the existing packaged `probe_b5.cmd` **one more time only**.
 
-After the capability matrix is known, continue on the same B5 branch and implement as much as supported in one coherent productization cycle:
+Preferred preparation:
 
-- 24-bit output
-- confirmed additional sample rates
-- measured selectable buffer sizes
-- lifecycle/stability hardening
-- narrow stereo input
-- Classic ARM64 / ARM64EC maintainability
+1. switch Windows default playback away from the Sound Blaster X4;
+2. close REAPER, foobar/media players, Creative App, and browser/media processes actively using X4;
+3. run `probe_b5.cmd` once;
+4. return the new `B5_CAPABILITY_REPORT.txt`.
 
-Then create one combined validation package. Do not ask for a manual user test after every internal change.
+The desired clean report must include Creative and independent behavioral data:
+
+- input/output channel counts/names
+- raw ASIO sample types, especially exact 24-bit packing
+- buffer min/max/preferred/granularity
+- `canSampleRate()` matrix
+- latency reporting
+- clock sources
+- repeated create/start/stop/dispose/reopen behavior
+
+If Render Pin 1 remains `G 1/1`, do not retry repeatedly and do not weaken BUSY. Add ownership diagnostics instead.
+
+After that clean matrix is available, implement 24-bit + confirmed rates + measured buffer selection + lifecycle hardening + narrow stereo input + dual-target maintainability in one coherent B5 batch, followed by one combined validation package.
 
 ---
 
-# CTCDC
+# Immutable safety rule
 
-CTCDC Direct Mode and its recovered session/control path remain preserved in the existing history. Do not rediscover BLE/HID/naked-COM or other previously excluded paths.
+Never bypass BUSY and never intentionally reproduce the historical active-render green-screen collision.
 
-Broader CTCDC work remains paused until B5 first-release ASIO capability/productization is complete.
+Known failure class:
+
+- `WDF_VIOLATION 0x10D`
+- Parameter 1 = 5
+- stale/destroyed `WDFUSBPIPE` path in `usbaudio2` recovery
+
+All render changes must preserve local/global ownership gates before pin creation. Input must use its own relevant ownership gate.
