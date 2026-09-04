@@ -19,18 +19,32 @@ GitHub 저장소:
 - `CURRENT_HANDOFF.md`
 - `NEXT_ACTION_ASIO_CONTROL_PANEL.md`
 - `NEXT_ACTION_ASIO.md`
-- 필요 시 `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
+- `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
 - 필요 시 `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V4_STATS_ALIAS_REGRESSION.md`
 
 그리고 실제 GitHub의 현재 `main` HEAD와 B5 관련 branch HEAD를 먼저 확인해서 문서와 일치하는지 보고해라.
 
 중요한 상태 구분:
 
-- 마지막으로 **실제 빌드/제품검증/REAPER 실재생까지 정상 확인된 B5 runtime reference**는
-  `ca37f0e8427227733cd6082a50e20101312e3333`
-- 현재 `exp/windows-arm64-asio-b5-capability-productization`에는 그보다 새로운 `post-coalesce-stale-v1` runtime patch가 있지만 **아직 빌드/런타임 검증 전**이다.
-- 따라서 최신 branch HEAD를 검증 완료 상태로 간주하지 마라.
-- 사용자는 검증된 `ca37f0e...` 번들을 REAPER에서 실제 재생했고 **문제가 없었다고 확인했다.** 이미 해결된 REAPER 재생 테스트를 반복 요구하지 마라.
+- 현재 B5 productization branch 기준 문서상 HEAD는
+  `4475fc17b70f372fe317fa201f201e8dc5543f9f`
+- 최신 runtime-code commit은
+  `64e34b48714789ab17fba57be34b054f2170b4e9`
+- 이 최신 `post-coalesce-stale-v1` 빌드는 **이미 빌드 + product validation 완료** 상태다.
+- 최신 product report는 `B5 INSTALL + PRODUCT VALIDATION: PASS`이며,
+  48k/240 output/duplex, 96k/240 duplex, REAPER-matched 48k/480 5초,
+  192k/384 short cycles, 48k/96, 48k/4800, 48k/512, ASIO capability probe가 모두 PASS했다.
+- `post-coalesce-stale-v1`도 dedicated 192k cadence에서 실제 동작이 확인됐다.
+  432/480/576에서는 `+2 coalesce -> optional same-packet stale wake`를 여러 번 복구하고도 stop=0으로 끝났다.
+- 그러나 192k/384 long cadence에서는 별도의 strict failure가 남아 있다:
+  `previous=1375 expected=1376 current=1378 delta=3`
+- 이 `delta=3` 문제는 **제어창 작업 범위가 아니다.** panel 작업 중 strict runtime check를 약하게 하거나 WaveRT/mux를 수정하지 마라.
+- 192k geometry는 다시 확인해도 동일하다: 384가 최초 할당 가능, 432..960 accepted. geometry probe를 또 시키지 마라.
+
+실제 audible REAPER 기준은 따로 구분해라:
+
+- 이전 `ca37f0e8427227733cd6082a50e20101312e3333` 빌드는 사용자가 ordinary REAPER 재생에서 문제가 없었다고 명시적으로 확인했다.
+- 최신 `4475fc...` 빌드는 product matrix와 48k/480 silent REAPER-matched case까지 PASS했지만, 사용자가 최신 빌드로 다시 audible REAPER를 했다고 명시하지 않는 한 이를 real-audio evidence로 과장하지 마라.
 
 제어창 작업은 runtime worker 실험과 분리한다.
 
@@ -38,7 +52,13 @@ GitHub 저장소:
 
 `exp/windows-arm64-asio-b5-control-panel`
 
-branch를 만들기 전에 GitHub에서 refs를 확인하고, 어떤 commit을 base로 쓸지 먼저 명확히 보고해라. 특별한 반대 근거가 없다면 검증된 `ca37f0e...`를 UI 작업의 runtime reference/base로 우선 검토한다.
+branch를 만들기 전에 GitHub에서 refs를 확인하고, 어떤 commit을 base로 쓸지 먼저 명확히 보고해라.
+
+현재 권장 base는 최신 product-matrix validated B5 HEAD:
+
+`4475fc17b70f372fe317fa201f201e8dc5543f9f`
+
+단, 이 branch에서 WaveRT/mux/runtime 파일은 freeze하고 제어창 때문에 수정하지 마라. 192k/384 delta=3 runtime 문제는 별도 작업으로 남긴다.
 
 현재 `driver_b5.cpp`에는:
 
@@ -79,6 +99,7 @@ UI는 디버그 툴처럼 보이지 않고 compact하고 그럴듯한 오디오 
 - BUSY/local/global ownership gate
 - WaveRT render/capture core
 - mux worker timing/recovery logic
+- `post-coalesce-stale-v1`
 - joined-worker-before-hardware-teardown
 - packet discontinuity / position / copy / callback-index strict checks
 - `runtime-failsafe-v1`
@@ -89,9 +110,10 @@ UI는 디버그 툴처럼 보이지 않고 compact하고 그럴듯한 오디오 
 
 1. GitHub refs 확인
 2. 지정 문서 전부 읽기
-3. `ca37f0e...` 기준 `driver_b5.cpp`, ARM64EC/Classic build adapter, CMake 구조 확인
+3. 현재 B5 HEAD 기준 `driver_b5.cpp`, ARM64EC/Classic build adapter, CMake 구조 확인
 4. control panel 구현에 필요한 최소 파일 목록과 branch/base 계획 보고
 5. `sysHandle`, `g_module`, `callbacks_`, `createBuffers`, `getBufferSize`, `getLatencies`, `setSampleRate`, `disposeBuffers`의 현재 semantics를 짧게 정리
-6. 그 다음 최소 구현으로 진행
+6. WaveRT/mux/runtime 파일을 UI branch에서 건드리지 않는다는 계획을 명시
+7. 그 다음 최소 구현으로 진행
 
-사용자의 시간을 보호해야 하므로 이미 끝난 geometry probe, 반복 REAPER 테스트, 배제된 하드웨어 실험을 다시 시키지 마라.
+사용자의 시간을 보호해야 하므로 이미 끝난 geometry probe, 반복 cadence probe, 반복 REAPER 테스트를 제어창 작업 시작 조건으로 다시 요구하지 마라.
