@@ -78,58 +78,63 @@ Latest cycles:
 
 No strict failure was recorded.
 
-Do not change mux-v3 merely to make these counters cosmetically match. First determine whether the difference causes a real input-quality problem in REAPER with an actual signal.
+Do not change mux-v3 merely to make these counters cosmetically match. Real-signal validation remains required later.
 
 ---
 
-# Immediate action — REAPER real-signal validation
+# Current missing product surface — ASIO control panel
 
-Do not rebuild or modify B5 first unless a concrete host-level failure appears.
+The B5 driver currently implements:
 
-Use the current B5 product ZIP and REAPER ARM64EC.
+`ASIOError controlPanel() override { return ASE_NotPresent; }`
 
-## Pass A — 48 kHz / 240
+This is now the immediate missing first-release feature.
 
-1. select `Sound Blaster X4 ARM64 ASIO B5`;
-2. set 48 kHz / 240 frames;
-3. play an actual project or audio file and confirm audible 24-bit output;
-4. connect/select a real stereo X4 input source;
-5. arm a stereo track and verify both L/R meters receive real signal while output continues;
-6. record a short clip and play it back;
-7. stop audio, close/reopen the ASIO device or REAPER, and repeat once.
+The previously agreed direction is to build our own native ARM64/ARM64EC-friendly control panel. Do not load or reuse Creative's control-panel binary; only use the official panel's compact latency-setting role and general visual credibility as reference.
 
-Required result:
+First control-panel scope:
 
-- no crash/green screen/BSOD
-- no BUSY override
-- no stuck device after stop/reopen
-- audible output
-- real non-zero stereo capture
+- launched by the host through `IASIO::controlPanel()`;
+- native Win32 UI with no external runtime dependency;
+- product identity: `Sound Blaster X4 ARM64 ASIO B5`;
+- current sample rate shown clearly;
+- buffer/latency setting is the primary editable control;
+- 48/96 kHz contract: 96..4800 frames, step 48, preferred 240;
+- 192 kHz contract: 384..4800 frames, step 48, preferred 384;
+- 512 compatibility value remains selectable/accepted;
+- current effective latency shown in frames and milliseconds;
+- Apply/OK/Cancel behavior must be deterministic;
+- no WaveRT pin creation merely from opening the panel;
+- never change buffer geometry while ASIO buffers/RUN are active;
+- if a host requires restart/reset for a changed buffer, request it through the ASIO host notification path rather than mutating an active engine underneath it;
+- UI should be compact and credible, not a diagnostic/debug window.
 
-## Pass B — 96 kHz / 240
-
-Repeat the same test at 96 kHz / 240.
-
-Specifically watch for:
-
-- dropouts
-- delayed or missing input blocks
-- obvious drift against output
-- one channel stopping
-- input meter freezing while playback continues
-
-If 48k passes but 96k input shows a concrete problem, capture evidence and fix only that measured issue. Do not weaken the existing strict packet/index/copy/position checks.
+The control panel must not weaken any BUSY, packet, copy, position, or joined-worker safety rule.
 
 ---
 
-# Release closure rule
+# Immediate action — implement control panel
 
-B5 first release can be considered closed only after:
+1. keep the just-passed B5 streaming core frozen;
+2. add a native control-panel implementation on the existing B5 productization branch;
+3. wire `IASIO::controlPanel()` to open it instead of returning `ASE_NotPresent`;
+4. keep buffer settings sample-rate aware;
+5. persist the selected buffer/latency setting for the next buffer creation, without touching an already-active stream;
+6. add a small host/helper validation that confirms the panel entry point exists and the selected setting is reflected by the driver after a safe reopen;
+7. rebuild/package through the existing manual `Build ASIO B5 Productization` workflow.
 
-- audible real 24-bit output PASS;
-- real stereo input PASS at the same time;
-- stop/reopen PASS;
-- at least 48 kHz host-level PASS;
-- preferably 96 kHz host-level PASS or a clearly documented limitation.
+Do not move to REAPER real-signal validation before this control-panel milestone is implemented and its setting path is verified.
 
-After that, freeze the first-release ASIO state and resume deferred CTCDC/CTIntrfu native static analysis.
+---
+
+# After control-panel PASS
+
+Then perform REAPER ARM64EC real-signal validation:
+
+1. audible 24-bit output at 48 kHz;
+2. real stereo X4 input while output remains active;
+3. short record/playback;
+4. stop/reopen;
+5. repeat at 96 kHz / 240 and specifically watch the known capture cadence quality observation.
+
+Only after control panel + real output + real input pass should B5 first-release ASIO be considered closed and deferred CTCDC/CTIntrfu work resume.
