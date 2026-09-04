@@ -13,8 +13,10 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
+      - name: Checkout capability-probe source
         uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-readonly-capability-map
 
       - name: Configure ARM64
         shell: pwsh
@@ -24,9 +26,9 @@ jobs:
       - name: Build Release
         shell: pwsh
         run: |
-          cmake --build build/x4-control-readonly-probe --config Release --parallel
+          cmake --build build/x4-control-readonly-probe --config Release --target x4-control-readonly-probe --parallel
 
-      - name: Verify ARM64 PE and package
+      - name: Verify ARM64 PE and stage
         shell: pwsh
         run: |
           $exe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
@@ -43,17 +45,16 @@ jobs:
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item $exe dist/x4-control-readonly-probe.exe
+          Copy-Item src/x4-control-readonly-probe/RUN-READONLY-CAPABILITY-PROBE.cmd dist/RUN-READONLY-CAPABILITY-PROBE.cmd
           Copy-Item src/x4-control-readonly-probe/README.md dist/README.md
-          Compress-Archive -Path dist/x4-control-readonly-probe.exe,dist/README.md -DestinationPath dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Force
 
           "ARM64 PE verified: 0xAA64"
           "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
-          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip -Algorithm SHA256).Hash)"
 
-      - name: Upload probe ZIP
+      - name: Upload probe artifact
         uses: actions/upload-artifact@v4
         with:
           name: SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64
-          path: dist/SoundBlaster-X4-ReadOnly-Capability-Probe-ARM64.zip
+          path: dist/*
           if-no-files-found: error
           retention-days: 14
