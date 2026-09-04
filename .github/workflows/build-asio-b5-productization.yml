@@ -81,14 +81,14 @@ jobs:
 
           foreach ($f in @($ec, $classic)) {
             $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($f))
-            if ($ascii -notmatch "dual-event-mux-v2") {
-              throw "B5 DLL missing dual-event-mux-v2 runtime marker: $f"
+            if ($ascii -notmatch "dual-event-mux-v3") {
+              throw "B5 DLL missing dual-event-mux-v3 runtime marker: $f"
             }
           }
 
           "ARM64EC verified: $ec"
           "Classic ARM64 verified: $classic"
-          "B5 mux v2 runtime marker verified in both DLLs"
+          "B5 mux v3 runtime marker verified in both DLLs"
 
       - name: Package B5 validation bundle
         shell: pwsh
