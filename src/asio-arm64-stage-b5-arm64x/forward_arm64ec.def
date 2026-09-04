@@ -1,0 +1,4 @@
+LIBRARY x4-asio-arm64x-b5.dll
+EXPORTS
+    DllCanUnloadNow=x4_asio_backend_arm64ec_b5.DllCanUnloadNow
+    DllGetClassObject=x4_asio_backend_arm64ec_b5.DllGetClassObject
