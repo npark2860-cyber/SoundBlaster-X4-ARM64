@@ -16,7 +16,7 @@ set(B5_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}/../asio-arm64-stage-b0")
 add_library(x4-asio-arm64-b5 SHARED
   "${B5_SHARED_DIR}/driver_b5.cpp"
   "${B5_SHARED_DIR}/preflight.cpp"
-  "${B5_SHARED_DIR}/wavert_engine_b5.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/wavert_engine_b5_classic.cpp"
   "${B5_SHARED_DIR}/driver.def"
 )
 target_include_directories(x4-asio-arm64-b5 PRIVATE "${B5_SHARED_DIR}")
@@ -27,7 +27,9 @@ target_compile_definitions(x4-asio-arm64-b5 PRIVATE
   _WIN32_WINNT=0x0A00
   WINVER=0x0A00
 )
-target_compile_options(x4-asio-arm64-b5 PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+# C4324 is the expected padding needed to honor the driver's explicit 64-byte
+# audio-buffer alignment. Suppress only this informational warning for B5.
+target_compile_options(x4-asio-arm64-b5 PRIVATE /W4 /wd4324 /permissive- /GR- /EHsc /Oy-)
 target_link_libraries(x4-asio-arm64-b5 PRIVATE
   advapi32.lib
   uuid.lib
