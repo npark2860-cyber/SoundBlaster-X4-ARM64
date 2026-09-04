@@ -22,7 +22,7 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@60de28df150776eb8ff60ebb74d0c84483903f79`
+`exp/windows-arm64-asio-b5-capability-productization@1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
@@ -91,11 +91,11 @@ Independent B4D also re-passed lifecycle x3.
 
 Current B5:
 
-`60de28df150776eb8ff60ebb74d0c84483903f79`
+`1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
 
 B5 remains descended from validated B4D with:
 
-- ahead: 18
+- ahead: 22
 - behind: 0
 - merge base: `a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
@@ -132,35 +132,50 @@ Never bypass BUSY and never intentionally reproduce historical `WDF_VIOLATION 0x
 
 # Latest compile status
 
-First `Build ASIO B5 Productization` build reached B5 ARM64EC code but failed before linking because of Windows SDK source compatibility:
+First productization build failed in new B5 WaveRT source on SDK compatibility and was fixed.
 
-- `_countof` unavailable in adapted shared WaveRT source
-- SDK 10.0.26100.0 `KSRTAUDIO_GETREADPACKET_INFO` member is `PerformanceCounterValue`, not `PerformanceCount`
-- C4324 warning from intentional 64-byte aligned host buffers
+Second build proved that the ARM64EC B5 DLL itself compiles and links:
 
-Fix is implemented on the same B5 branch:
+`x4-asio-arm64ec-b5.dll`
 
-- ARM64EC WaveRT adapter supplies compatibility definitions
-- Classic ARM64 WaveRT adapter added with the same definitions
-- Classic CMake uses that adapter
-- C4324 suppressed only for B5 driver targets
+The build then failed only in `register_b5_arm64ec.cpp` because four standalone `_countof` uses remained.
 
-This fix has **not yet received compile PASS evidence**.
+Non-fatal linker warnings also showed that reusing B4D `driver.def` for B5 caused:
+
+- LNK4104 on COM exports;
+- LNK4070 due the B4D `LIBRARY "x4-asio-arm64"` name.
+
+Second fix is now implemented:
+
+- all register-helper `_countof` uses removed;
+- B5-only `driver_b5.def` added;
+- ARM64EC and Classic B5 targets use the B5-only export definition;
+- original B4D `driver.def` remains unchanged.
+
+The full productization workflow has not yet completed end-to-end.
 
 ---
 
 # Immediate next action
 
-Re-run manual workflow:
+Run manual workflow again:
 
 `Build ASIO B5 Productization`
 
-The checkout ref is the B5 branch, so the rebuild should check out:
+The rebuild must check out current B5:
 
-`60de28df150776eb8ff60ebb74d0c84483903f79`
+`1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
 
-If it fails, inspect logs and fix all remaining compile/link issues on this same branch without hardware micro-tests.
+Remaining proof targets in this one run:
 
-After Actions PASS, run the packaged `install_and_validate_b5.cmd` once and return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+- register helper compile/link;
+- product validation helper compile/link;
+- Classic ARM64 B5 DLL;
+- PE architecture checks;
+- final productization ZIP.
+
+If it fails, inspect the exact next compiler/linker error and continue fixing on this same B5 branch. Do not request hardware micro-tests.
+
+After Actions PASS, run packaged `install_and_validate_b5.cmd` once and return `B5_PRODUCT_VALIDATION_REPORT.txt`.
 
 Only after that bundled silent runtime PASS should one final REAPER validation cover audible output + stereo input together.
