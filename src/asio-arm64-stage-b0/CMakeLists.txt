@@ -84,3 +84,41 @@ target_link_libraries(x4-asio-stage-b4d-host-probe PRIVATE ole32.lib)
 set_property(TARGET x4-asio-stage-b4d-host-probe PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 add_dependencies(x4-asio-stage-b4d-host-probe x4-asio-arm64ec)
+
+# B5-0 measurement-only tools. These do not modify the validated B4D transport.
+add_executable(x4-asio-stage-b5-capability-probe
+  capability_probe_b5_arm64ec.cpp
+)
+target_compile_features(x4-asio-stage-b5-capability-probe PRIVATE cxx_std_17)
+target_compile_definitions(x4-asio-stage-b5-capability-probe PRIVATE
+  UNICODE
+  _UNICODE
+  _WIN32_WINNT=0x0A00
+  WINVER=0x0A00
+)
+target_compile_options(x4-asio-stage-b5-capability-probe PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+target_link_libraries(x4-asio-stage-b5-capability-probe PRIVATE
+  advapi32.lib
+  ole32.lib
+)
+set_property(TARGET x4-asio-stage-b5-capability-probe PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
+add_executable(x4-asio-stage-b5-ks-probe
+  ks_capability_probe_b5_arm64ec.cpp
+)
+target_compile_features(x4-asio-stage-b5-ks-probe PRIVATE cxx_std_17)
+target_compile_definitions(x4-asio-stage-b5-ks-probe PRIVATE
+  UNICODE
+  _UNICODE
+  _WIN32_WINNT=0x0A00
+  WINVER=0x0A00
+)
+target_compile_options(x4-asio-stage-b5-ks-probe PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+target_link_libraries(x4-asio-stage-b5-ks-probe PRIVATE
+  ole32.lib
+  setupapi.lib
+  uuid.lib
+)
+set_property(TARGET x4-asio-stage-b5-ks-probe PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
