@@ -64,6 +64,10 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
         qpc = position.u64QPCPosition;
         if (have_previous_position_ && position_blocks < previous_position_) {
             ++stats_.position_regressions;
+            sprintf_s(last_message_, sizeof(last_message_),
+                      "B5 RENDER POSITION REGRESSION previous=%llu current=%llu",
+                      static_cast<unsigned long long>(previous_position_),
+                      static_cast<unsigned long long>(position_blocks));
         }
         previous_position_ = position_blocks;
         have_previous_position_ = true;
@@ -92,7 +96,15 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
     }
 
     if (have_previous_packet_ && packet_number != previous_packet_ + 1) {
+        const ULONG previous_packet = previous_packet_;
+        const ULONG expected_packet = previous_packet + 1;
+        const ULONG delta = packet_number - previous_packet;
         ++stats_.packet_discontinuities;
+        const char* dir =
+            config_.direction == X4WaveRtB5Direction::Render ? "RENDER" : "CAPTURE";
+        sprintf_s(last_message_, sizeof(last_message_),
+                  "B5 %s PACKET DISCONTINUITY previous=%lu expected=%lu current=%lu delta=%lu",
+                  dir, previous_packet, expected_packet, packet_number, delta);
     }
     previous_packet_ = packet_number;
     have_previous_packet_ = true;
