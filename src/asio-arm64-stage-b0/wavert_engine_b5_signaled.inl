@@ -10,9 +10,11 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
     BOOL* more_data_out,
     X4WaveRtB5NotificationObserver observer,
     void* observer_context,
-    bool trace_notification) {
+    bool trace_notification,
+    bool allow_render_stale_duplicate) {
 
     static constexpr char kPacketStatsSemantics[] = "packet-stats-observed-v1";
+    static constexpr char kPostCoalesceStaleMarker[] = "post-coalesce-stale-v1";
 
     if (packet_number_out) *packet_number_out = 0;
     if (more_data_out) *more_data_out = FALSE;
@@ -95,6 +97,24 @@ X4WaveRtB5ProcessResult X4WaveRtEngineB5::process_signaled_notification(
         packet_number = info.PacketNumber;
         qpc = info.PerformanceCount;
         more_data = info.MoreData;
+    }
+
+    // The cadence probe measured a very specific sequence after a recovered
+    // Render +2 coalesce: the immediately following auto-reset wake can report
+    // the same absolute PACKETCOUNT once more. The mux must explicitly arm this
+    // allowance after a successful +2 recovery. An unarmed duplicate remains a
+    // strict packet discontinuity. No callback or notification statistic is
+    // advanced for the consumed stale wake.
+    if (have_previous_packet_ &&
+        config_.direction == X4WaveRtB5Direction::Render &&
+        allow_render_stale_duplicate &&
+        packet_number == previous_packet_) {
+        if (packet_number_out) *packet_number_out = packet_number;
+        if (more_data_out) *more_data_out = FALSE;
+        sprintf_s(last_message_, sizeof(last_message_),
+                  "B5 RENDER POST-COALESCE STALE WAKE packet=%lu marker=%s",
+                  packet_number, kPostCoalesceStaleMarker);
+        return X4WaveRtB5ProcessResult::NoData;
     }
 
     if (have_previous_packet_ && packet_number != previous_packet_ + 1) {
