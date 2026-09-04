@@ -1,0 +1,152 @@
+name: Temp Fix B5 Sample Rate Persistence
+
+on:
+  push:
+    branches:
+      - exp/windows-arm64-asio-b5-control-panel
+    paths:
+      - .github/workflows/temp-fix-b5-sample-rate.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: exp/windows-arm64-asio-b5-control-panel
+          fetch-depth: 0
+
+      - name: Apply minimal sample-rate persistence fix
+        shell: pwsh
+        run: |
+          $path = "src/asio-arm64-stage-b0/driver_b5.cpp"
+          $text = Get-Content $path -Raw
+
+          $old = @'
+constexpr ULONG kRenderPinId = 1;
+constexpr ULONG kCapturePinId = 4;
+'@
+          $new = @'
+constexpr ULONG kRenderPinId = 1;
+constexpr ULONG kCapturePinId = 4;
+constexpr wchar_t kB5PreferencesKey[] = L"Software\\SoundBlaster-X4-ARM64\\ASIO B5";
+constexpr wchar_t kB5SampleRateValue[] = L"SampleRate";
+'@
+          if (-not $text.Contains($old)) { throw "constants anchor not found" }
+          $text = $text.Replace($old, $new)
+
+          $old = @'
+bool supported_rate(ASIOSampleRate rate) {
+    return rate == 48000.0 || rate == 96000.0 || rate == 192000.0;
+}
+
+bool capture_supported_rate(ASIOSampleRate rate) {
+'@
+          $new = @'
+bool supported_rate(ASIOSampleRate rate) {
+    return rate == 48000.0 || rate == 96000.0 || rate == 192000.0;
+}
+
+ASIOSampleRate load_persisted_sample_rate() {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    const LONG result = RegGetValueW(
+        HKEY_CURRENT_USER,
+        kB5PreferencesKey,
+        kB5SampleRateValue,
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &value,
+        &size);
+    if (result != ERROR_SUCCESS) return 48000.0;
+    const ASIOSampleRate rate = static_cast<ASIOSampleRate>(value);
+    return supported_rate(rate) ? rate : 48000.0;
+}
+
+bool save_persisted_sample_rate(ASIOSampleRate rate) {
+    if (!supported_rate(rate)) return false;
+    HKEY key = nullptr;
+    const LONG open_result = RegCreateKeyExW(
+        HKEY_CURRENT_USER,
+        kB5PreferencesKey,
+        0,
+        nullptr,
+        REG_OPTION_NON_VOLATILE,
+        KEY_SET_VALUE,
+        nullptr,
+        &key,
+        nullptr);
+    if (open_result != ERROR_SUCCESS) return false;
+
+    const DWORD value = static_cast<DWORD>(rate);
+    const LONG set_result = RegSetValueExW(
+        key,
+        kB5SampleRateValue,
+        0,
+        REG_DWORD,
+        reinterpret_cast<const BYTE*>(&value),
+        sizeof(value));
+    RegCloseKey(key);
+    return set_result == ERROR_SUCCESS;
+}
+
+bool capture_supported_rate(ASIOSampleRate rate) {
+'@
+          if (-not $text.Contains($old)) { throw "supported_rate anchor not found" }
+          $text = $text.Replace($old, $new)
+
+          $old = @'
+        release_host_buffers();
+        initialized_free_ = false;
+        sample_rate_ = 48000.0;
+        InterlockedExchange64(&sample_position_, 0);
+'@
+          $new = @'
+        release_host_buffers();
+        initialized_free_ = false;
+        sample_rate_ = load_persisted_sample_rate();
+        InterlockedExchange64(&sample_position_, 0);
+'@
+          if (-not $text.Contains($old)) { throw "init sample-rate anchor not found" }
+          $text = $text.Replace($old, $new)
+
+          $old = @'
+        sample_rate_ = sampleRate;
+        sprintf_s(last_error_, sizeof(last_error_), "B5 sample rate selected %.0f Hz", sample_rate_);
+        return ASE_OK;
+'@
+          $new = @'
+        sample_rate_ = sampleRate;
+        const bool persisted = save_persisted_sample_rate(sample_rate_);
+        sprintf_s(last_error_, sizeof(last_error_),
+                  "B5 sample rate selected %.0f Hz persist=%s",
+                  sample_rate_, persisted ? "YES" : "NO");
+        return ASE_OK;
+'@
+          if (-not $text.Contains($old)) { throw "setSampleRate anchor not found" }
+          $text = $text.Replace($old, $new)
+
+          Set-Content -Path $path -Value $text -Encoding utf8NoBOM
+          git rm .github/workflows/temp-fix-b5-sample-rate.yml
+
+          $changed = @(git diff --name-only)
+          $expected = @(
+            ".github/workflows/temp-fix-b5-sample-rate.yml",
+            "src/asio-arm64-stage-b0/driver_b5.cpp"
+          )
+          $unexpected = @($changed | Where-Object { $_ -notin $expected })
+          if ($unexpected.Count -gt 0) { throw "Unexpected files changed: $($unexpected -join ', ')" }
+          if ($changed.Count -ne 2) { throw "Expected exactly two working-tree paths, got $($changed.Count)" }
+          git diff --check
+
+      - name: Commit fix and remove temporary workflow
+        shell: pwsh
+        run: |
+          git config user.name "npark2860-cyber"
+          git config user.email "npark2860@gmail.com"
+          git add src/asio-arm64-stage-b0/driver_b5.cpp
+          git commit -am "Persist B5 sample rate across ASIO reinitialization"
+          git push origin HEAD:exp/windows-arm64-asio-b5-control-panel
