@@ -110,6 +110,28 @@ int run_case(const TestCase& tc) {
             return 22;
         }
 
+        long min_size = 0;
+        long max_size = 0;
+        long preferred_size = 0;
+        long granularity = 0;
+        const ASIOError buffer_contract = asio->getBufferSize(
+            &min_size, &max_size, &preferred_size, &granularity);
+        const long expected_min = tc.rate == 192000.0 ? 384 : 96;
+        const long expected_preferred = tc.rate == 192000.0 ? 384 : 240;
+        if (buffer_contract != ASE_OK ||
+            min_size != expected_min || max_size != 4800 ||
+            preferred_size != expected_preferred || granularity != 48) {
+            std::printf(
+                "case=%s cycle=%d bufferContract result=%ld min=%ld max=%ld preferred=%ld granularity=%ld expectedMin=%ld expectedPreferred=%ld FAIL\n",
+                tc.name, cycle, buffer_contract, min_size, max_size,
+                preferred_size, granularity, expected_min, expected_preferred);
+            asio->Release();
+            return 29;
+        }
+        std::printf(
+            "case=%s cycle=%d bufferContract min=%ld max=%ld preferred=%ld granularity=%ld PASS\n",
+            tc.name, cycle, min_size, max_size, preferred_size, granularity);
+
         long inputs = 0;
         long outputs = 0;
         if (asio->getChannels(&inputs, &outputs) != ASE_OK || outputs != 2 ||
@@ -229,7 +251,7 @@ int main() {
         {"preferred-48-output", 48000.0, 240, false, 3, 700},
         {"preferred-48-duplex", 48000.0, 240, true, 2, 700},
         {"preferred-96-duplex", 96000.0, 240, true, 2, 700},
-        {"preferred-192-output", 192000.0, 240, false, 2, 700},
+        {"preferred-192-output", 192000.0, 384, false, 2, 700},
         {"minimum-48-output", 48000.0, 96, false, 1, 500},
         {"maximum-48-output", 48000.0, 4800, false, 1, 900},
         {"b4d-512-compat", 48000.0, 512, false, 1, 700},
