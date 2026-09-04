@@ -22,21 +22,22 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
+`exp/windows-arm64-asio-b5-capability-productization@7223257c0e86ea9c0a64b90f61968d00496011ab`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
-4. `NEXT_ACTION_ASIO.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
-6. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
-7. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
-8. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
-9. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
+2. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
+5. `NEXT_ACTION_ASIO.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
+7. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+8. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
+9. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+10. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
 
 CTCDC remains deferred until the B5 first-release ASIO pass is closed.
 
@@ -63,11 +64,7 @@ Do not modify validated B4D unless a concrete B5 regression requires it.
 
 # B5 capability/reference — FULL PASS
 
-Clean combined capability report completed with:
-
-`B5 COMBINED CAPABILITY PROBE RESULT: PASS`
-
-Creative measured contract:
+Creative measured reference remains:
 
 - 2 inputs / 10 outputs
 - all channels `Int24LSB` type 17
@@ -83,7 +80,7 @@ X4 KS evidence:
 - Render Pin 1: 2/6/8ch, 16/24-bit, 48/96/192 kHz
 - Capture Pin 4: stereo, 16/24-bit, 48/96 kHz
 
-Independent B4D also re-passed lifecycle x3.
+Independent B4D lifecycle x3 also re-passed.
 
 ---
 
@@ -91,15 +88,7 @@ Independent B4D also re-passed lifecycle x3.
 
 Current B5:
 
-`1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
-
-B5 remains descended from validated B4D with:
-
-- ahead: 22
-- behind: 0
-- merge base: `a95a95d014bcc1c3a521be41325841ae96dc8a61`
-
-Validated B4D core files remain untouched.
+`7223257c0e86ea9c0a64b90f61968d00496011ab`
 
 B5 side-by-side identity:
 
@@ -130,52 +119,87 @@ Never bypass BUSY and never intentionally reproduce historical `WDF_VIOLATION 0x
 
 ---
 
-# Latest compile status
+# Build/package status
 
-First productization build failed in new B5 WaveRT source on SDK compatibility and was fixed.
+The B5 ARM64EC DLL and helper executables are now proven to compile/load sufficiently to generate a real product validation report on the X4 system.
 
-Second build proved that the ARM64EC B5 DLL itself compiles and links:
+The returned runtime package successfully:
 
-`x4-asio-arm64ec-b5.dll`
+- registered B5 side-by-side;
+- verified its registry/CLSID/DLL path;
+- ran the property-only KS probe;
+- instantiated B5 through COM;
+- reported the exact B5 public ASIO contract.
 
-The build then failed only in `register_b5_arm64ec.cpp` because four standalone `_countof` uses remained.
+The report therefore supersedes the earlier compile-only pending state for the ARM64EC validation path.
 
-Non-fatal linker warnings also showed that reusing B4D `driver.def` for B5 caused:
+---
 
-- LNK4104 on COM exports;
-- LNK4070 due the B4D `LIBRARY "x4-asio-arm64"` name.
+# Latest B5 runtime — BUSY race, not transport failure
 
-Second fix is now implemented:
+Returned `B5_PRODUCT_VALIDATION_REPORT.txt` generated 2026-09-04 11:24:32 showed:
 
-- all register-helper `_countof` uses removed;
-- B5-only `driver_b5.def` added;
-- ARM64EC and Classic B5 targets use the B5-only export definition;
-- original B4D `driver.def` remains unchanged.
+Initial immutable property-only gate:
 
-The full productization workflow has not yet completed end-to-end.
+- Render Pin 1 `C 0/1`
+- Render Pin 1 `G 0/1`
+- BUSY = NO
+
+B5 public ASIO report then passed:
+
+- init FREE
+- 2 in / 2 out
+- all exposed channels Int24LSB type 17
+- buffer 96..4800 / preferred 240 / granularity 48
+- 48/96/192 kHz
+- Internal Clock
+- latency 240/240
+- time-info supported
+
+Immediately afterward, the first product-matrix `init()` observed:
+
+- Render Pin 1 `C 0/1`
+- Render Pin 1 `G 1/1`
+- BUSY
+- `KsCreatePin` skipped
+
+Result:
+
+`B5 PRODUCT VALIDATION RESULT: BUSY_BLOCKED`
+
+This is correct safety behavior. It is not evidence of a B5 transport crash.
+
+The capability probe source only calls `init()` and public query APIs and releases the COM object. It does not call `createBuffers()`, `start()`, or `KsCreatePin`, so this report does not support blaming the capability probe itself for the global pin owner.
+
+The supported interpretation is an external ownership race/window between separate validation processes.
+
+---
+
+# Script fix
+
+`install_and_validate_b5.cmd` was updated on the B5 branch to:
+
+1. register/verify;
+2. run the immutable property-only idle gate;
+3. immediately run the actual product lifecycle matrix while the FREE window is current;
+4. classify matrix exit code 10 as BUSY_BLOCKED, not generic FAIL;
+5. take one post-block property-only KS snapshot without opening a pin;
+6. move the public ASIO capability report after lifecycle PASS.
+
+No BUSY gate was weakened.
 
 ---
 
 # Immediate next action
 
-Run manual workflow again:
+Do **not** rebuild just to test the missing matrix.
 
-`Build ASIO B5 Productization`
+The current package already contains `x4-asio-stage-b5-product-validation.exe`, and that EXE performs its own B5 `init()` ownership gate before any pin creation.
 
-The rebuild must check out current B5:
+With X4 not used by other playback and preferably not the Windows default playback endpoint, run the existing matrix executable **once directly**, skipping the preceding capability process.
 
-`1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
+Capture its stdout/stderr and return that result.
 
-Remaining proof targets in this one run:
+If it again immediately reports Render Pin 1 `G 1/1`, do not repeatedly retry. The next engineering step is ownership diagnostics.
 
-- register helper compile/link;
-- product validation helper compile/link;
-- Classic ARM64 B5 DLL;
-- PE architecture checks;
-- final productization ZIP.
-
-If it fails, inspect the exact next compiler/linker error and continue fixing on this same B5 branch. Do not request hardware micro-tests.
-
-After Actions PASS, run packaged `install_and_validate_b5.cmd` once and return `B5_PRODUCT_VALIDATION_REPORT.txt`.
-
-Only after that bundled silent runtime PASS should one final REAPER validation cover audible output + stereo input together.
+If the direct matrix passes, proceed to one final REAPER B5 real-use validation covering audible output + stereo input together.
