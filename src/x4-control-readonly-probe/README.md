@@ -34,7 +34,28 @@ The executable contains no Direct Mode setter, no Malcolm SET command (`0x12`), 
 
 The probe auto-detects `USB\\VID_041E&PID_3278&MI_01`; no COM-port argument is normally required.
 
-## 2. CTCDC challenge capture
+## 2. Mixer read-only drill-down
+
+The first complete capability run established that raw Mixer command `0x21` is live on SB1815 and reports 11 AudioControl descriptors. `x4-mixer-readonly-drilldown.exe` narrows the next test to that confirmed path only.
+
+It performs:
+
+- the same validated CTCDC session gate;
+- read-only Malcolm sub-feature support query `5A 10 00`;
+- AudioControl information GET `0x21`;
+- AudioControl level-range GET `0x22` for the reported control indices;
+- AudioLevel GET `0x23` only for controls whose descriptor reports volume support;
+- AudioMute GET `0x24` only for controls whose descriptor reports mute support.
+
+It contains no mixer SET operation, no Malcolm SET (`0x12`), no Direct Mode setter, and no arbitrary raw-command CLI.
+
+### Easy run
+
+1. Fully close Creative App.
+2. Double-click `RUN-MIXER-READONLY-DRILLDOWN.cmd`.
+3. Upload `X4_MIXER_DRILLDOWN_REPORT.txt`.
+
+## 3. CTCDC challenge capture
 
 `x4-ctcdc-challenge-capture.exe` is retained as a diagnostic fallback only if the normal `5A 03 00` readiness query still returns no response while Creative App is confirmed closed.
 
@@ -44,4 +65,4 @@ It reproduces the validated CTCDC COM setup, sends `5A 03 00`, and only if that 
 
 It records the device reply to `X4_CTCDC_CHALLENGE_REPORT.txt` and stops. It does **not** generate/send the cryptographic unlock reply, does not send `SW_MODE1`, and does not send any feature SET command.
 
-Do not change Direct Mode, Malcolm SET, EQ SET, Sound Mode SET, or other X4 feature state while using the read-only capability probe.
+Do not change Direct Mode, Malcolm SET, EQ SET, Sound Mode SET, or other X4 feature state while using these read-only probes.
