@@ -13,19 +13,14 @@
 #include <cwchar>
 #include <new>
 
-#if !defined(_M_ARM64EC)
-#error B5 driver adapter must be compiled as ARM64EC.
-#endif
-
-// Expose only this translation unit's B5 internals so the high-rate worker
-// adapter can multiplex Render/Capture notification events without changing
-// the validated B4D source or the stable public WaveRT engine ABI.
-#define private public
 #include "asio_callback_compat.h"
 #include "b5_identity.h"
 #include "preflight.h"
 #include "wavert_engine_b5.h"
-#undef private
+
+#if !defined(_M_ARM64EC)
+#error B5 driver adapter must be compiled as ARM64EC.
+#endif
 
 static_assert(sizeof(long) == 4, "Windows ASIO ABI requires 32-bit long");
 static_assert(sizeof(void*) == 8, "B5 requires a 64-bit host ABI");
@@ -50,9 +45,9 @@ HANDLE WINAPI b5_create_mux_thread(
     LPDWORD);
 } // namespace
 
-// Replace only B5's worker thread creation. The original worker remains in the
-// shared source for reference, but this ARM64EC build executes the dual-event
-// multiplexer defined in driver_b5_mux_adapter.inl.
+// All SDK/project headers above are parsed normally. Only the translation-unit
+// local B5 driver class is exposed to its mux implementation below; the macro
+// can no longer alter COM/SDK declarations such as cguid.h::__uuidof.
 #define CreateThread b5_create_mux_thread
 #define private public
 #define _M_ARM64 1
