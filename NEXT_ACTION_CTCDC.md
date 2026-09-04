@@ -1,6 +1,14 @@
 # NEXT ACTION — Native Windows ARM64 Controller Implementation
 
-Updated: 2026-09-03 KST
+Updated: 2026-09-04 KST
+
+## Priority status
+
+CTCDC work is **paused, not superseded**.
+
+The current project priority is to finish the independent ASIO driver to a practical first-release capability level. Do not rediscover CTCDC transport/protocol work while ASIO B5 productization is active.
+
+When ASIO first-release capability work is closed, resume from the already-proven CTCDC state below.
 
 ## Current status
 
@@ -39,7 +47,7 @@ Full native reference trace:
 
 Do not revive obsolete `6A`, guessed `5C`, HID-prefix, BLE, vendor-interface, or UAC Extension Unit paths.
 
-## Next engineering phase
+## Next engineering phase when CTCDC resumes
 
 Build the actual independent Windows ARM64 controller rather than another protocol probe.
 
