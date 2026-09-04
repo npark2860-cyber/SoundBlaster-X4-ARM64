@@ -20,7 +20,7 @@ Immutable safety:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@bb2a42e143cc0b48a60a131e44a06002e3594ec5`
+`exp/windows-arm64-asio-b5-capability-productization@d84ed0e7f8f5c4402b44d577140a4780b2aa0bf3`
 
 Runtime/build marker:
 
@@ -30,7 +30,7 @@ Runtime/build marker:
 
 # Latest returned runtime
 
-Report generated `2026-09-04 12:25:44.97` proved mux v2 was built and loaded.
+Report generated `2026-09-04 12:37:34.26`.
 
 PASS:
 
@@ -39,51 +39,46 @@ PASS:
 - KS capability probe
 - 48k/240 output x3
 - 48k/240 full duplex x2
+- 96k/240 full duplex x2
 
-96k/240 full duplex failed after one callback with:
+96k duplex now stops cleanly with no strict packet/index/copy errors. Capture still trails render (`capturePhaseMisses=27/23`), so exact duplex cadence is not yet closed, but mux-v2's false synchronization failure is fixed.
 
-`next render notification arrived before prior capture synchronization`
+New failure:
 
-At failure:
+`B5 RENDER BUFFER_WITH_NOTIFICATION FAILED Win32=87 requested=2880`
 
-- render packet discontinuities=0
-- capture packet discontinuities=0
-- render position regressions=0
-- callback-index errors=0
-- render/capture copy errors=0
+at 192k/240 output during `createBuffers()`, before worker creation or KSSTATE_RUN.
 
-Therefore the failure was mux-v2's exact render/capture phase policy, not a hardware packet failure.
+This moves the immediate blocker from scheduling to 192 kHz WaveRT buffer geometry.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
 
 ---
 
-# Fix now implemented — mux v3
+# Measurement tool now implemented
 
-Full-duplex behavior:
+New ARM64EC target:
 
-- Render is the callback/master clock.
-- Render callback and write-ahead never wait for exact Capture phase.
-- Capture runs as an independent producer into two tagged staging slots.
-- Capture is queried on its own event and opportunistically at render wakes.
-- Oldest unconsumed Capture packet is copied into the current ASIO input buffer.
-- A single missing Capture packet at render time is treated as phase offset and zero-fills that input buffer.
-- More than four consecutive misses is fatal capture starvation.
+`x4-asio-stage-b5-192k-geometry-probe`
 
-Still fatal:
+Packaged runner:
 
-- Render packet discontinuity
-- Capture packet discontinuity
-- Render presentation-position regression
-- callback index repetition
-- copy failures
-- capture staging overrun/sequence mismatch
-- sustained capture starvation
-- worker failure
+`probe_b5_192k_geometry.cmd`
 
-BUSY and joined-worker safety are unchanged.
+Behavior:
+
+- 192 kHz / stereo / 24-bit / Render Pin 1
+- never enters KSSTATE_RUN
+- checks local/global FREE before every `KsCreatePin`
+- scans 48..960 frames per notification in 48-frame steps
+- equivalent to 0.25..5.0 ms per notification at 192 kHz
+- NotificationCount=2
+- records requested bytes, PASS/FAIL, Win32 error and `ActualBufferSize`
+- closes each pin and requires the gate to return FREE before the next candidate
+
+The main productization workflow builds and packages this probe but does not execute it automatically.
 
 ---
 
@@ -93,35 +88,24 @@ Run manual workflow:
 
 `Build ASIO B5 Productization`
 
-Do not reuse the mux-v2 ZIP.
-
 Required build outcome:
 
-1. ARM64EC DLL + helpers compile/link PASS;
-2. Classic ARM64 DLL compile/link PASS;
-3. PE/ARM64X checks PASS;
-4. both DLLs contain `dual-event-mux-v3`;
-5. ZIP is produced.
+1. ARM64EC B5 DLL + normal helpers compile/link PASS;
+2. `x4-asio-stage-b5-192k-geometry-probe.exe` compile/link PASS;
+3. Classic ARM64 DLL compile/link PASS;
+4. PE/ARM64X checks PASS;
+5. both B5 DLLs contain `dual-event-mux-v3`;
+6. ZIP is produced with `probe_b5_192k_geometry.cmd`.
 
-After build PASS only:
+After build PASS:
 
 1. download the new ZIP;
-2. close other X4 playback/default endpoint ownership as before;
-3. run `install_and_validate_b5.cmd` once;
-4. return the new `B5_PRODUCT_VALIDATION_REPORT.txt`.
+2. close REAPER/media players/Creative App playback and any other X4 user;
+3. run `probe_b5_192k_geometry.cmd` once;
+4. return `B5_192K_GEOMETRY_REPORT.txt`.
 
-A report counts as mux-v3 evidence only when it contains:
+Do not rerun the full product matrix first; the known blocker is already the 192 kHz geometry allocation.
 
-`adapter=dual-event-mux-v3`
+Do not patch product buffer geometry until the probe identifies the first accepted 192 kHz notification size.
 
-The matrix must reach:
-
-- 48k/240 output x3
-- 48k/240 full duplex x2
-- 96k/240 full duplex x2
-- 192k/240 output x2
-- 48k/96 output x1
-- 48k/4800 output x1
-- 48k/512 compatibility output x1
-
-After full matrix PASS, perform final REAPER validation with audible 24-bit output and real stereo input together.
+If the geometry probe reports BUSY/INDETERMINATE or the pin does not return FREE after closing a candidate, stop instead of retrying repeatedly.
