@@ -25,6 +25,8 @@ constexpr long kOutputChannels = 2;
 constexpr long kMinBufferFrames = 96;
 constexpr long kMaxBufferFrames = 4800;
 constexpr long kPreferredBufferFrames = 240;
+constexpr long kMinBufferFrames192 = 384;
+constexpr long kPreferredBufferFrames192 = 384;
 constexpr long kBufferGranularity = 48;
 constexpr long kB4DCompatibilityFrames = 512;
 constexpr ULONG kNotificationCount = 2;
@@ -115,8 +117,6 @@ public:
         InterlockedExchange64(&sample_position_, 0);
         InterlockedExchange64(&sample_timestamp_ns_, 0);
 
-        // Immutable safety rule: the proven Render Pin 1 local + global gate
-        // must be FREE before this driver will permit any later pin creation.
         const X4InstancePreflightResult preflight = run_x4_instance_preflight();
         if (!preflight.device_found) {
             strcpy_s(last_error_, "B5 init FAILED: X4 msft_wave not found");
@@ -193,8 +193,6 @@ public:
             return ASE_NoMemory;
         }
 
-        // Capture starts first so a full-duplex callback can obtain its first
-        // completed packet before the render-driven callback consumes it.
         if (capture_selected_ && !capture_.start_run()) {
             strcpy_s(last_error_, capture_.last_message());
             CloseHandle(stop_event_);
@@ -291,7 +289,9 @@ public:
 
     ASIOError getLatencies(long* inputLatency, long* outputLatency) override {
         if (!inputLatency || !outputLatency) return ASE_InvalidParameter;
-        const long frames = buffers_created_ ? buffer_frames_ : kPreferredBufferFrames;
+        const long preferred = sample_rate_ == 192000.0 ?
+            kPreferredBufferFrames192 : kPreferredBufferFrames;
+        const long frames = buffers_created_ ? buffer_frames_ : preferred;
         *inputLatency = capture_supported_rate(sample_rate_) ? frames : 0;
         *outputLatency = frames;
         return ASE_OK;
@@ -299,9 +299,10 @@ public:
 
     ASIOError getBufferSize(long* minSize, long* maxSize, long* preferredSize, long* granularity) override {
         if (!minSize || !maxSize || !preferredSize || !granularity) return ASE_InvalidParameter;
-        *minSize = kMinBufferFrames;
+        const bool rate_192 = sample_rate_ == 192000.0;
+        *minSize = rate_192 ? kMinBufferFrames192 : kMinBufferFrames;
         *maxSize = kMaxBufferFrames;
-        *preferredSize = kPreferredBufferFrames;
+        *preferredSize = rate_192 ? kPreferredBufferFrames192 : kPreferredBufferFrames;
         *granularity = kBufferGranularity;
         return ASE_OK;
     }
@@ -396,10 +397,12 @@ public:
             strcpy_s(last_error_, "B5 createBuffers requires channels + legacy bufferSwitch fallback");
             return ASE_InvalidParameter;
         }
-        if (!valid_buffer_size(bufferSize)) {
+        const long selected_min = sample_rate_ == 192000.0 ?
+            kMinBufferFrames192 : kMinBufferFrames;
+        if (!valid_buffer_size(bufferSize) || bufferSize < selected_min) {
             sprintf_s(last_error_, sizeof(last_error_),
-                      "B5 createBuffers invalid frames=%ld; expected 96..4800 step48 (512 compatibility accepted)",
-                      bufferSize);
+                      "B5 createBuffers invalid frames=%ld rate=%.0f; expected %ld..4800 step48 (512 compatibility accepted)",
+                      bufferSize, sample_rate_, selected_min);
             return ASE_InvalidParameter;
         }
         if (buffers_created_ || render_.prepared() || capture_.prepared()) {
