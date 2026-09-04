@@ -2,7 +2,7 @@
 
 Updated: 2026-09-04 KST
 
-## Validated baseline
+## Validated fallback
 
 B4D remains the proven fallback:
 
@@ -10,79 +10,118 @@ B4D remains the proven fallback:
 
 Do not alter B4D unless B5 exposes a concrete regression.
 
-Immutable safety remains:
+Immutable safety:
 
 - never bypass local/global BUSY gates
-- never intentionally reproduce the historical active-render collision
+- never intentionally reproduce the active-render collision
 - never tear hardware down before the worker is joined
 
 ---
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
-
-B5 first-release contract and mux-v2 runtime behavior remain unchanged.
+`exp/windows-arm64-asio-b5-capability-productization@bb2a42e143cc0b48a60a131e44a06002e3594ec5`
 
 Runtime/build marker:
 
-`dual-event-mux-v2`
+`dual-event-mux-v3`
 
 ---
 
-# Latest build evidence
+# Latest returned runtime
 
-ARM64EC compile failed a second time at:
+Report generated `2026-09-04 12:25:44.97` proved mux v2 was built and loaded.
 
-```text
-cguid.h(33,18): error C2059: syntax error: '__uuidof'
-```
+PASS:
 
-while compiling `driver_b5_arm64ec.cpp` with Windows SDK 10.0.26100.0.
+- registration
+- property-only idle gate
+- KS capability probe
+- 48k/240 output x3
+- 48k/240 full duplex x2
 
-The earlier claim that moving `#define private public` below SDK/project headers was sufficient is superseded.
+96k/240 full duplex failed after one callback with:
 
-The mux driver translation unit had also introduced `winioctl.h`, `ks.h`, and `ksmedia.h` before ASIO/COM headers. Mux v2 does not require those headers directly.
+`next render notification arrived before prior capture synchronization`
+
+At failure:
+
+- render packet discontinuities=0
+- capture packet discontinuities=0
+- render position regressions=0
+- callback-index errors=0
+- render/capture copy errors=0
+
+Therefore the failure was mux-v2's exact render/capture phase policy, not a hardware packet failure.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
 
 ---
 
-# Fix now applied
+# Fix now implemented — mux v3
 
-Removed direct KS headers from:
+Full-duplex behavior:
 
-- ARM64EC B5 COM/ASIO driver adapter
-- Classic ARM64 B5 COM/ASIO driver adapter
+- Render is the callback/master clock.
+- Render callback and write-ahead never wait for exact Capture phase.
+- Capture runs as an independent producer into two tagged staging slots.
+- Capture is queried on its own event and opportunistically at render wakes.
+- Oldest unconsumed Capture packet is copied into the current ASIO input buffer.
+- A single missing Capture packet at render time is treated as phase offset and zero-fills that input buffer.
+- More than four consecutive misses is fatal capture starvation.
 
-KS headers remain isolated in WaveRT engine translation units.
+Still fatal:
 
-No packet logic or safety behavior changed.
+- Render packet discontinuity
+- Capture packet discontinuity
+- Render presentation-position regression
+- callback index repetition
+- copy failures
+- capture staging overrun/sequence mismatch
+- sustained capture starvation
+- worker failure
+
+BUSY and joined-worker safety are unchanged.
 
 ---
 
 # Immediate action
 
-Run manual workflow once:
+Run manual workflow:
 
 `Build ASIO B5 Productization`
 
-Do **not** run hardware validation until the workflow passes all of:
+Do not reuse the mux-v2 ZIP.
 
-1. ARM64EC DLL compile/link;
-2. B5 helper compile/link;
-3. Classic ARM64 DLL compile/link;
-4. PE/ARM64X checks;
-5. `dual-event-mux-v2` present in both DLLs;
-6. ZIP package produced.
+Required build outcome:
 
-If the same `cguid.h::__uuidof` C2059 appears again, the next fix is already defined: make the shared B5 source accept ARM64EC directly and remove the adapter's `_M_ARM64` / `_M_ARM64EC` architecture spoof. Do not try another include-order micro-fix.
+1. ARM64EC DLL + helpers compile/link PASS;
+2. Classic ARM64 DLL compile/link PASS;
+3. PE/ARM64X checks PASS;
+4. both DLLs contain `dual-event-mux-v3`;
+5. ZIP is produced.
 
 After build PASS only:
 
-1. download the new `SoundBlaster-X4-ASIO-B5-Productization.zip`;
+1. download the new ZIP;
 2. close other X4 playback/default endpoint ownership as before;
 3. run `install_and_validate_b5.cmd` once;
 4. return the new `B5_PRODUCT_VALIDATION_REPORT.txt`.
+
+A report counts as mux-v3 evidence only when it contains:
+
+`adapter=dual-event-mux-v3`
+
+The matrix must reach:
+
+- 48k/240 output x3
+- 48k/240 full duplex x2
+- 96k/240 full duplex x2
+- 192k/240 output x2
+- 48k/96 output x1
+- 48k/4800 output x1
+- 48k/512 compatibility output x1
+
+After full matrix PASS, perform final REAPER validation with audible 24-bit output and real stereo input together.
