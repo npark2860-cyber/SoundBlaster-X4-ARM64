@@ -20,37 +20,19 @@ Immutable safety remains:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@869307d44750af3e23c2de68dc84cc32d9b5e05f`
+`exp/windows-arm64-asio-b5-capability-productization@9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
 
-B5 first-release contract remains:
+B5 first-release contract and mux-v2 runtime behavior remain unchanged.
 
-- 2 output channels, Int24LSB
-- 2 input channels at 48/96 kHz, Int24LSB
-- output 48/96/192 kHz
-- 192 kHz reports zero input channels
-- buffer 96..4800 / granularity 48 / preferred 240
-- 512 compatibility exception
-- Internal Clock
-- ASIO 2.x time-info
-- Render Pin 1 + Capture Pin 4 WaveRT
+Runtime/build marker:
+
+`dual-event-mux-v2`
 
 ---
 
-# Latest runtime evidence
+# Latest build evidence
 
-Latest returned runtime report still proves:
-
-- 48k/240 output x3 PASS
-- 48k/240 full duplex x2 PASS
-- 96k/240 full duplex failure caused by serial Render->Capture notification waits and auto-reset event coalescing
-
-The dual-event mux was introduced to fix that structural problem.
-
----
-
-# Latest build failure
-
-The first mux build failed before DLL creation:
+ARM64EC compile failed a second time at:
 
 ```text
 cguid.h(33,18): error C2059: syntax error: '__uuidof'
@@ -58,53 +40,32 @@ cguid.h(33,18): error C2059: syntax error: '__uuidof'
 
 while compiling `driver_b5_arm64ec.cpp` with Windows SDK 10.0.26100.0.
 
-Cause: `#define private public` was active while project headers pulled Windows/COM SDK declarations.
+The earlier claim that moving `#define private public` below SDK/project headers was sufficient is superseded.
 
-This is a compile-time adapter error only. Do not derive any new hardware conclusion from this run.
+The mux driver translation unit had also introduced `winioctl.h`, `ks.h`, and `ksmedia.h` before ASIO/COM headers. Mux v2 does not require those headers directly.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
 
 ---
 
-# Fix now implemented — dual-event-mux-v2
+# Fix now applied
 
-The SDK-facing keyword macro contamination is removed.
+Removed direct KS headers from:
 
-ARM64EC and Classic adapters now include all SDK/project headers normally first.
+- ARM64EC B5 COM/ASIO driver adapter
+- Classic ARM64 B5 COM/ASIO driver adapter
 
-WaveRT engine access from the mux is through a narrow public API:
+KS headers remain isolated in WaveRT engine translation units.
 
-`process_signaled_notification(...)`
-
-Implementation:
-
-`wavert_engine_b5_signaled.inl`
-
-Behavior retained:
-
-- simultaneous stop/capture/render wait in full duplex
-- capture lower wait index
-- exact render N / capture N-1 pairing
-- render write-ahead N+1
-- capture `ERROR_NOT_READY` => transient `NoData`
-- `MoreData=TRUE` drain
-- strict packet discontinuity detection
-- strict callback-index/copy/sync failure handling
-- MMCSS `Pro Audio` + `AVRT_PRIORITY_CRITICAL`
-
-Runtime/build marker is now:
-
-`dual-event-mux-v2`
-
-The main workflow scans both built DLLs for this exact marker and fails before packaging if either lacks it.
+No packet logic or safety behavior changed.
 
 ---
 
 # Immediate action
 
-Run manual workflow:
+Run manual workflow once:
 
 `Build ASIO B5 Productization`
 
@@ -113,11 +74,11 @@ Do **not** run hardware validation until the workflow passes all of:
 1. ARM64EC DLL compile/link;
 2. B5 helper compile/link;
 3. Classic ARM64 DLL compile/link;
-4. PE/ARM64X architecture checks;
+4. PE/ARM64X checks;
 5. `dual-event-mux-v2` present in both DLLs;
 6. ZIP package produced.
 
-If build fails, return the exact Actions log. Continue fixing all related build/link/workflow problems on this same B5 branch; do not create a microbranch and do not request a hardware micro-test.
+If the same `cguid.h::__uuidof` C2059 appears again, the next fix is already defined: make the shared B5 source accept ARM64EC directly and remove the adapter's `_M_ARM64` / `_M_ARM64EC` architecture spoof. Do not try another include-order micro-fix.
 
 After build PASS only:
 
@@ -125,19 +86,3 @@ After build PASS only:
 2. close other X4 playback/default endpoint ownership as before;
 3. run `install_and_validate_b5.cmd` once;
 4. return the new `B5_PRODUCT_VALIDATION_REPORT.txt`.
-
-A runtime report counts as mux-v2 evidence only if it contains:
-
-`adapter=dual-event-mux-v2`
-
-The strict matrix must still reach:
-
-- 48k/240 output x3
-- 48k/240 full duplex x2
-- 96k/240 full duplex x2
-- 192k/240 output x2
-- 48k/96 output x1
-- 48k/4800 output x1
-- 48k/512 compatibility output x1
-
-Only after full matrix PASS should final REAPER validation cover audible 24-bit output plus real stereo input together.
