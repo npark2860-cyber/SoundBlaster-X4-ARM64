@@ -8,7 +8,159 @@
 namespace {
 
 constexpr char kB5MuxAdapter[] = "dual-event-mux-v3";
+constexpr char kB5RuntimeFailsafe[] = "runtime-failsafe-v1";
+constexpr wchar_t kB5RuntimeFailureFileName[] = L"B5_RUNTIME_FAILURE.txt";
 constexpr ULONG kB5CaptureStarvationLimit = 4;
+
+bool b5_emergency_silence_render(X4AsioDriverB5* self) {
+    if (!self || !self->render_selected_) return true;
+    if (!self->render_.prepared()) return false;
+
+    // Do not stop/dispose the pin here. The worker must return first so the
+    // existing joined-worker-before-hardware-teardown rule remains intact.
+    // Both WaveRT notification slots are overwritten with silence so a worker
+    // failure cannot leave the last audible cyclic contents repeating forever.
+    const ULONG frames = static_cast<ULONG>(self->buffer_frames_);
+    const bool slot0 = self->render_.write_render_packet24(
+        0, self->zero_buffer_, self->zero_buffer_, frames);
+    const bool slot1 = self->render_.write_render_packet24(
+        1, self->zero_buffer_, self->zero_buffer_, frames);
+    return slot0 && slot1;
+}
+
+void b5_write_runtime_failure_record(
+    X4AsioDriverB5* self,
+    const char* direction,
+    const char* failure_message,
+    const char* render_message,
+    const char* capture_message,
+    DWORD worker_win32_error,
+    bool silence_ok,
+    const X4WaveRtB5Stats& render_stats,
+    const X4WaveRtB5Stats& capture_stats,
+    ULONG capture_not_ready,
+    ULONG capture_more_data,
+    ULONG capture_phase_misses,
+    ULONG capture_packets_consumed) {
+
+    if (!self) return;
+
+    SYSTEMTIME now{};
+    GetLocalTime(&now);
+
+    const LONG callbacks = InterlockedCompareExchange(&self->callback_count_, 0, 0);
+    const LONG index_errors = InterlockedCompareExchange(&self->callback_index_errors_, 0, 0);
+    const LONG render_copy_errors = InterlockedCompareExchange(&self->dma_copy_errors_, 0, 0);
+    const LONG capture_copy_errors = InterlockedCompareExchange(&self->capture_copy_errors_, 0, 0);
+
+    char record[4096]{};
+    sprintf_s(
+        record, sizeof(record),
+        "Sound Blaster X4 ARM64 ASIO B5 runtime failure\r\n"
+        "marker=%s adapter=%s\r\n"
+        "timeLocal=%04u-%02u-%02u %02u:%02u:%02u.%03u tickMs=%llu\r\n"
+        "processId=%lu threadId=%lu\r\n"
+        "direction=%s reason=%s workerWin32=%lu emergencySilence=%s\r\n"
+        "rate=%.0f frames=%ld renderSelected=%d captureSelected=%d renderRunning=%d captureRunning=%d\r\n"
+        "callbacks=%ld lastCallbackIndex=%ld indexErrors=%ld renderCopyErrors=%ld captureCopyErrors=%ld\r\n"
+        "render notifications=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
+        "capture notifications=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
+        "captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\r\n"
+        "renderMessage=%s\r\n"
+        "captureMessage=%s\r\n"
+        "logPath=%%TEMP%%\\B5_RUNTIME_FAILURE.txt\r\n",
+        kB5RuntimeFailsafe, kB5MuxAdapter,
+        now.wYear, now.wMonth, now.wDay,
+        now.wHour, now.wMinute, now.wSecond, now.wMilliseconds,
+        static_cast<unsigned long long>(GetTickCount64()),
+        GetCurrentProcessId(), GetCurrentThreadId(),
+        direction ? direction : "unknown",
+        failure_message ? failure_message : "unknown",
+        worker_win32_error,
+        silence_ok ? "OK" : "FAILED",
+        self->sample_rate_, self->buffer_frames_,
+        self->render_selected_ ? 1 : 0,
+        self->capture_selected_ ? 1 : 0,
+        self->render_.running() ? 1 : 0,
+        self->capture_.running() ? 1 : 0,
+        callbacks, self->last_callback_index_, index_errors,
+        render_copy_errors, capture_copy_errors,
+        render_stats.notifications,
+        render_stats.packet_discontinuities,
+        render_stats.position_regressions,
+        render_stats.hardware_buffer_writes,
+        render_stats.dma_frames_copied,
+        render_stats.dma_nonzero_samples,
+        render_stats.last_packet,
+        capture_stats.notifications,
+        capture_stats.packet_discontinuities,
+        capture_stats.position_regressions,
+        capture_stats.hardware_buffer_writes,
+        capture_stats.dma_frames_copied,
+        capture_stats.dma_nonzero_samples,
+        capture_stats.last_packet,
+        capture_not_ready, capture_more_data,
+        capture_phase_misses, capture_packets_consumed,
+        render_message ? render_message : "",
+        capture_message ? capture_message : "");
+
+    // Always expose the record to DebugView/attached debuggers even if file I/O
+    // is unavailable. File output is failure-only and occurs after silence.
+    OutputDebugStringA(record);
+
+    wchar_t log_path[MAX_PATH]{};
+    wchar_t temp_path[MAX_PATH]{};
+    constexpr DWORD temp_chars = static_cast<DWORD>(sizeof(temp_path) / sizeof(temp_path[0]));
+    const DWORD temp_len = GetTempPathW(temp_chars, temp_path);
+    if (temp_len > 0 && temp_len < temp_chars) {
+        swprintf_s(
+            log_path, sizeof(log_path) / sizeof(log_path[0]),
+            L"%ls%ls", temp_path, kB5RuntimeFailureFileName);
+    } else {
+        wcscpy_s(
+            log_path, sizeof(log_path) / sizeof(log_path[0]),
+            kB5RuntimeFailureFileName);
+    }
+
+    HANDLE file = CreateFileW(
+        log_path,
+        GENERIC_WRITE,
+        FILE_SHARE_READ,
+        nullptr,
+        CREATE_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        char file_error[160]{};
+        sprintf_s(
+            file_error, sizeof(file_error),
+            "B5 runtime failure log CreateFileW FAILED Win32=%lu\n",
+            GetLastError());
+        OutputDebugStringA(file_error);
+        std::printf("%s", file_error);
+        return;
+    }
+
+    DWORD written = 0;
+    const DWORD bytes = static_cast<DWORD>(std::strlen(record));
+    const BOOL write_ok = WriteFile(file, record, bytes, &written, nullptr);
+    FlushFileBuffers(file);
+    CloseHandle(file);
+
+    if (!write_ok || written != bytes) {
+        char write_error[192]{};
+        sprintf_s(
+            write_error, sizeof(write_error),
+            "B5 runtime failure log WriteFile incomplete ok=%d written=%lu expected=%lu Win32=%lu\n",
+            write_ok ? 1 : 0, written, bytes, GetLastError());
+        OutputDebugStringA(write_error);
+        std::printf("%s", write_error);
+    } else {
+        OutputDebugStringW(L"B5 runtime failure log written: ");
+        OutputDebugStringW(log_path);
+        OutputDebugStringW(L"\n");
+    }
+}
 
 bool b5_mux_dispatch_callback(
     X4AsioDriverB5* self,
@@ -102,8 +254,9 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     if (!self || !self->stop_event_) return ERROR_INVALID_PARAMETER;
 
     std::printf(
-        "B5 worker START adapter=%s thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
-        kB5MuxAdapter, GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
+        "B5 worker START adapter=%s failsafe=%s thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
+        kB5MuxAdapter, kB5RuntimeFailsafe,
+        GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
         self->render_selected_ ? 1 : 0, self->capture_selected_ ? 1 : 0);
 
     ULONG capture_not_ready = 0;
@@ -112,9 +265,44 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     ULONG capture_packets_consumed = 0;
 
     auto fail_worker = [&](const char* direction, const char* message) -> DWORD {
+        // Capture the diagnostic state before the emergency silence writes can
+        // alter render write counters or the engine's last-message buffer.
+        const DWORD worker_win32_error = GetLastError();
+        const X4WaveRtB5Stats render_stats = self->render_.stats();
+        const X4WaveRtB5Stats capture_stats = self->capture_.stats();
+        char failure_message[224]{};
+        char render_message[224]{};
+        char capture_message[224]{};
+        strcpy_s(failure_message, message ? message : "unknown");
+        strcpy_s(render_message, self->render_.last_message());
+        strcpy_s(capture_message, self->capture_.last_message());
+
         InterlockedExchange(&self->worker_failed_, 1);
-        std::printf("B5 worker %s failed: %s\n",
-                    direction, message ? message : "unknown");
+
+        // Silence first. File/debug logging is intentionally after this call so
+        // a blocked filesystem cannot prolong a repeating last-buffer tone.
+        const bool silence_ok = b5_emergency_silence_render(self);
+
+        b5_write_runtime_failure_record(
+            self,
+            direction,
+            failure_message,
+            render_message,
+            capture_message,
+            worker_win32_error,
+            silence_ok,
+            render_stats,
+            capture_stats,
+            capture_not_ready,
+            capture_more_data,
+            capture_phase_misses,
+            capture_packets_consumed);
+
+        std::printf(
+            "B5 worker %s failed: %s emergencySilence=%s log=%%TEMP%%\\B5_RUNTIME_FAILURE.txt\n",
+            direction ? direction : "unknown",
+            failure_message,
+            silence_ok ? "OK" : "FAILED");
         return ERROR_GEN_FAILURE;
     };
 
@@ -402,8 +590,9 @@ DWORD WINAPI b5_mux_thread_entry(LPVOID parameter) {
     }
 
     std::printf(
-        "B5 worker realtime adapter=%s mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
+        "B5 worker realtime adapter=%s failsafe=%s mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
         kB5MuxAdapter,
+        kB5RuntimeFailsafe,
         mmcss ? "Pro Audio" : "FALLBACK",
         priority_ok ? "OK" : "FAIL",
         task_index, mmcss_error, GetCurrentThreadId());
