@@ -9,6 +9,7 @@ namespace {
 
 constexpr char kB5MuxAdapter[] = "dual-event-mux-v4-coalesce-recovery";
 constexpr char kB5RuntimeFailsafe[] = "runtime-failsafe-v1";
+constexpr char kB5PostCoalesceStale[] = "post-coalesce-stale-v1";
 constexpr wchar_t kB5RuntimeFailureFileName[] = L"B5_RUNTIME_FAILURE.txt";
 constexpr ULONG kB5CaptureStarvationLimit = 4;
 
@@ -43,7 +44,8 @@ void b5_write_runtime_failure_record(
     ULONG capture_phase_misses,
     ULONG capture_packets_consumed,
     ULONG render_recovered_coalesces,
-    ULONG render_dropped_blocks) {
+    ULONG render_dropped_blocks,
+    ULONG render_stale_wakes) {
 
     if (!self) return;
 
@@ -59,19 +61,19 @@ void b5_write_runtime_failure_record(
     sprintf_s(
         record, sizeof(record),
         "Sound Blaster X4 ARM64 ASIO B5 runtime failure\r\n"
-        "marker=%s adapter=%s\r\n"
+        "marker=%s adapter=%s postCoalesce=%s\r\n"
         "timeLocal=%04u-%02u-%02u %02u:%02u:%02u.%03u tickMs=%llu\r\n"
         "processId=%lu threadId=%lu\r\n"
         "direction=%s reason=%s workerWin32=%lu emergencySilence=%s\r\n"
         "rate=%.0f frames=%ld renderSelected=%d captureSelected=%d renderRunning=%d captureRunning=%d\r\n"
         "callbacks=%ld lastCallbackIndex=%ld indexErrors=%ld renderCopyErrors=%ld captureCopyErrors=%ld\r\n"
-        "render notifications=%lu notificationCoalesces=%lu recoveredCoalesces=%lu droppedBlocks=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
+        "render notifications=%lu notificationCoalesces=%lu recoveredCoalesces=%lu droppedBlocks=%lu staleWakes=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
         "capture notifications=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
         "captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\r\n"
         "renderMessage=%s\r\n"
         "captureMessage=%s\r\n"
         "logPath=%%TEMP%%\\B5_RUNTIME_FAILURE.txt\r\n",
-        kB5RuntimeFailsafe, kB5MuxAdapter,
+        kB5RuntimeFailsafe, kB5MuxAdapter, kB5PostCoalesceStale,
         now.wYear, now.wMonth, now.wDay,
         now.wHour, now.wMinute, now.wSecond, now.wMilliseconds,
         static_cast<unsigned long long>(GetTickCount64()),
@@ -91,6 +93,7 @@ void b5_write_runtime_failure_record(
         render_stats.notification_coalesces,
         render_recovered_coalesces,
         render_dropped_blocks,
+        render_stale_wakes,
         render_stats.packet_discontinuities,
         render_stats.position_regressions,
         render_stats.hardware_buffer_writes,
@@ -221,16 +224,25 @@ bool b5_mux_dispatch_callback(
 bool b5_mux_render_event(
     X4AsioDriverB5* self,
     ULONG* packet_out,
-    bool* coalesced_out) {
+    bool* coalesced_out,
+    bool allow_stale_duplicate,
+    bool* stale_out) {
 
     if (coalesced_out) *coalesced_out = false;
+    if (stale_out) *stale_out = false;
     const auto before = self->render_.stats();
     ULONG packet = 0;
     BOOL more_data = FALSE;
     const X4WaveRtB5ProcessResult result =
         self->render_.process_signaled_notification(
-            &packet, &more_data, nullptr, nullptr, false);
+            &packet, &more_data, nullptr, nullptr, false,
+            allow_stale_duplicate);
 
+    if (result == X4WaveRtB5ProcessResult::NoData && allow_stale_duplicate) {
+        if (packet_out) *packet_out = packet;
+        if (stale_out) *stale_out = true;
+        return true;
+    }
     if (result != X4WaveRtB5ProcessResult::Notification) return false;
 
     const auto after = self->render_.stats();
@@ -251,7 +263,7 @@ bool b5_mux_render_event(
         return false;
     }
 
-    *packet_out = packet;
+    if (packet_out) *packet_out = packet;
     if (coalesced_out) *coalesced_out = coalesced;
     return true;
 }
@@ -278,8 +290,8 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     if (!self || !self->stop_event_) return ERROR_INVALID_PARAMETER;
 
     std::printf(
-        "B5 worker START adapter=%s failsafe=%s thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
-        kB5MuxAdapter, kB5RuntimeFailsafe,
+        "B5 worker START adapter=%s failsafe=%s postCoalesce=%s thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
+        kB5MuxAdapter, kB5RuntimeFailsafe, kB5PostCoalesceStale,
         GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
         self->render_selected_ ? 1 : 0, self->capture_selected_ ? 1 : 0);
 
@@ -289,6 +301,8 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     ULONG capture_packets_consumed = 0;
     ULONG render_recovered_coalesces = 0;
     ULONG render_dropped_blocks = 0;
+    ULONG render_stale_wakes = 0;
+    bool allow_post_coalesce_stale = false;
 
     auto fail_worker = [&](const char* direction, const char* message) -> DWORD {
         // Capture the diagnostic state before the emergency silence writes can
@@ -324,7 +338,8 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             capture_phase_misses,
             capture_packets_consumed,
             render_recovered_coalesces,
-            render_dropped_blocks);
+            render_dropped_blocks,
+            render_stale_wakes);
 
         std::printf(
             "B5 worker %s failed: %s emergencySilence=%s log=%%TEMP%%\\B5_RUNTIME_FAILURE.txt\n",
@@ -369,6 +384,18 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
         OutputDebugStringA(message);
         std::printf("%s", message);
         return true;
+    };
+
+    auto consume_stale_render_wake = [&](ULONG packet) {
+        ++render_stale_wakes;
+        allow_post_coalesce_stale = false;
+        char message[224]{};
+        sprintf_s(
+            message, sizeof(message),
+            "B5 RENDER POST-COALESCE STALE WAKE consumed packet=%lu staleWakes=%lu marker=%s\n",
+            packet, render_stale_wakes, kB5PostCoalesceStale);
+        OutputDebugStringA(message);
+        std::printf("%s", message);
     };
 
     if (self->render_selected_ && self->capture_selected_) {
@@ -544,15 +571,28 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
 
             ULONG render_packet = 0;
             bool render_coalesced = false;
+            bool render_stale = false;
             if (!b5_mux_render_event(
-                    self, &render_packet, &render_coalesced)) {
+                    self, &render_packet, &render_coalesced,
+                    allow_post_coalesce_stale, &render_stale)) {
                 return fail_worker("RENDER", self->render_.last_message());
             }
 
-            if (render_coalesced &&
-                !recover_one_render_coalesce(render_packet, true)) {
-                return fail_worker(
-                    "DUPLEX", "render coalesce catch-up callback failed");
+            if (render_stale) {
+                consume_stale_render_wake(render_packet);
+                continue;
+            }
+
+            // The one-shot allowance applies only to the immediately following
+            // render wake. A normal advancing packet consumes the allowance too.
+            allow_post_coalesce_stale = false;
+
+            if (render_coalesced) {
+                if (!recover_one_render_coalesce(render_packet, true)) {
+                    return fail_worker(
+                        "DUPLEX", "render coalesce catch-up callback failed");
+                }
+                allow_post_coalesce_stale = true;
             }
 
             const long buffer_index = static_cast<long>(
@@ -584,15 +624,26 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
 
             ULONG render_packet = 0;
             bool render_coalesced = false;
+            bool render_stale = false;
             if (!b5_mux_render_event(
-                    self, &render_packet, &render_coalesced)) {
+                    self, &render_packet, &render_coalesced,
+                    allow_post_coalesce_stale, &render_stale)) {
                 return fail_worker("RENDER", self->render_.last_message());
             }
 
-            if (render_coalesced &&
-                !recover_one_render_coalesce(render_packet, false)) {
-                return fail_worker(
-                    "RENDER", "render coalesce catch-up callback failed");
+            if (render_stale) {
+                consume_stale_render_wake(render_packet);
+                continue;
+            }
+
+            allow_post_coalesce_stale = false;
+
+            if (render_coalesced) {
+                if (!recover_one_render_coalesce(render_packet, false)) {
+                    return fail_worker(
+                        "RENDER", "render coalesce catch-up callback failed");
+                }
+                allow_post_coalesce_stale = true;
             }
 
             const long buffer_index = static_cast<long>(
@@ -653,9 +704,9 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     }
 
     std::printf(
-        "B5 worker EXIT adapter=%s thread=%lu renderCoalesces=%lu renderDroppedBlocks=%lu captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\n",
-        kB5MuxAdapter, GetCurrentThreadId(),
-        render_recovered_coalesces, render_dropped_blocks,
+        "B5 worker EXIT adapter=%s postCoalesce=%s thread=%lu renderCoalesces=%lu renderDroppedBlocks=%lu renderStaleWakes=%lu captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\n",
+        kB5MuxAdapter, kB5PostCoalesceStale, GetCurrentThreadId(),
+        render_recovered_coalesces, render_dropped_blocks, render_stale_wakes,
         capture_not_ready, capture_more_data,
         capture_phase_misses, capture_packets_consumed);
     return ERROR_SUCCESS;
@@ -676,9 +727,10 @@ DWORD WINAPI b5_mux_thread_entry(LPVOID parameter) {
     }
 
     std::printf(
-        "B5 worker realtime adapter=%s failsafe=%s mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
+        "B5 worker realtime adapter=%s failsafe=%s postCoalesce=%s mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
         kB5MuxAdapter,
         kB5RuntimeFailsafe,
+        kB5PostCoalesceStale,
         mmcss ? "Pro Audio" : "FALLBACK",
         priority_ok ? "OK" : "FAIL",
         task_index, mmcss_error, GetCurrentThreadId());
