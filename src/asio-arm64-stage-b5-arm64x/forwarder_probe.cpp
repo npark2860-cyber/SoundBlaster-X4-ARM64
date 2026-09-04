@@ -95,9 +95,9 @@ int wmain() {
 
     const HMODULE expected = GetModuleHandleW(expected_backend_name());
     const HMODULE unexpected = GetModuleHandleW(unexpected_backend_name());
-    std::wprintf(L"expectedBackend=%ls loaded=%s\n",
+    std::wprintf(L"expectedBackend=%ls loaded=%ls\n",
                  expected_backend_name(), expected ? L"YES" : L"NO");
-    std::wprintf(L"unexpectedBackend=%ls loaded=%s\n",
+    std::wprintf(L"unexpectedBackend=%ls loaded=%ls\n",
                  unexpected_backend_name(), unexpected ? L"YES" : L"NO");
 
     const HRESULT unload_hr = can_unload();
