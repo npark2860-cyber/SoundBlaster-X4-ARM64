@@ -48,7 +48,7 @@ const wchar_t* base_name(const wchar_t* path) {
     return slash ? slash + 1 : path;
 }
 
-bool module_for_address(const void* address, wchar_t (&path)[MAX_PATH]) {
+bool module_for_address(FARPROC address, wchar_t (&path)[MAX_PATH]) {
     HMODULE module = nullptr;
     if (!GetModuleHandleExW(
             GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
@@ -61,9 +61,19 @@ bool module_for_address(const void* address, wchar_t (&path)[MAX_PATH]) {
 
 } // namespace
 
-int wmain() {
+int wmain(int argc, wchar_t** argv) {
+    if (argc > 2) {
+        std::puts("Usage: ARM64X probe [full-path-to-x4-asio-arm64x-b5.dll]");
+        return 2;
+    }
+
     wchar_t forwarder_path[MAX_PATH]{};
-    if (!sibling_path(kForwarderName, forwarder_path)) {
+    if (argc == 2) {
+        if (!GetFullPathNameW(argv[1], MAX_PATH, forwarder_path, nullptr)) {
+            std::printf("GetFullPathNameW failed Win32=%lu\n", GetLastError());
+            return 2;
+        }
+    } else if (!sibling_path(kForwarderName, forwarder_path)) {
         std::puts("B5 ARM64X PROBE: FAIL (cannot resolve forwarder path)");
         return 2;
     }
@@ -78,18 +88,19 @@ int wmain() {
         return 3;
     }
 
-    auto get_class_object = reinterpret_cast<DllGetClassObjectFn>(
-        GetProcAddress(forwarder, "DllGetClassObject"));
-    auto can_unload = reinterpret_cast<DllCanUnloadNowFn>(
-        GetProcAddress(forwarder, "DllCanUnloadNow"));
-    if (!get_class_object || !can_unload) {
+    const FARPROC get_class_proc = GetProcAddress(forwarder, "DllGetClassObject");
+    const FARPROC can_unload_proc = GetProcAddress(forwarder, "DllCanUnloadNow");
+    if (!get_class_proc || !can_unload_proc) {
         std::puts("B5 ARM64X PROBE: FAIL (missing runtime COM exports)");
         FreeLibrary(forwarder);
         return 4;
     }
 
+    auto get_class_object = reinterpret_cast<DllGetClassObjectFn>(get_class_proc);
+    auto can_unload = reinterpret_cast<DllCanUnloadNowFn>(can_unload_proc);
+
     wchar_t routed_module[MAX_PATH]{};
-    if (!module_for_address(reinterpret_cast<const void*>(get_class_object), routed_module)) {
+    if (!module_for_address(get_class_proc, routed_module)) {
         std::printf("GetModuleHandleExW failed Win32=%lu\n", GetLastError());
         std::puts("B5 ARM64X PROBE: FAIL (cannot resolve routed backend)");
         FreeLibrary(forwarder);
