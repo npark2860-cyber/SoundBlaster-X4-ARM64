@@ -81,7 +81,7 @@ add_library(x4-asio-arm64ec-b5 SHARED
   driver_b5_arm64ec.cpp
   preflight_b4d_arm64ec.cpp
   wavert_engine_b5_arm64ec.cpp
-  driver.def
+  driver_b5.def
 )
 target_compile_features(x4-asio-arm64ec-b5 PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-arm64ec-b5 PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
