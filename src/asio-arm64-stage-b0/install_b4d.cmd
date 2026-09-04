@@ -11,7 +11,16 @@ if errorlevel 1 (
   exit /b 1
 )
 echo.
-echo REGISTER PASS. Open REAPER ARM64EC and select:
+echo Registration verified. Probing normal COM registry load from ARM64EC host...
+x4-asio-stage-b4d-host-probe.exe
+if errorlevel 1 (
+  echo.
+  echo HOST PROBE FAILED. Run uninstall_b4d.cmd and do not open REAPER yet.
+  pause
+  exit /b 2
+)
+echo.
+echo REGISTER + HOST PROBE PASS. Open REAPER ARM64EC and select:
 echo   Audio system: ASIO
 echo   ASIO Driver: Sound Blaster X4 ARM64 ASIO
 echo.
