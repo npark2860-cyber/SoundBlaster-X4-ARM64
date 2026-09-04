@@ -16,17 +16,13 @@ Repository:
 
 `npark2860-cyber/SoundBlaster-X4-ARM64`
 
-Validated B5 runtime reference:
+Earlier real-audible REAPER reference:
 
 `ca37f0e8427227733cd6082a50e20101312e3333`
 
-Evidence attached to that built bundle:
+The user explicitly reported ordinary REAPER playback was normal on that built bundle.
 
-- full B5 product matrix PASS
-- REAPER-matched 48 kHz / 480 frames / 5 seconds: 500 callbacks, stop=0, workerJoined=YES
-- user subsequently reported ordinary REAPER playback had no problem
-
-Current productization branch:
+Current B5 productization branch:
 
 `exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
 
@@ -34,13 +30,23 @@ Latest runtime-code commit on it:
 
 `64e34b48714789ab17fba57be34b054f2170b4e9`
 
-That newer post-coalesce stale-wake delta has not yet been built or runtime-validated. Do not silently treat the branch HEAD as the validated streaming baseline.
+This current branch has now been built and product-validated. The latest report generated `2026-09-04 16:32:53.73` returned:
+
+`B5 INSTALL + PRODUCT VALIDATION: PASS`
+
+including the REAPER-matched 48 kHz / 480-frame 5-second silent case with 500 callbacks, stop=0 and workerJoined=YES.
+
+The dedicated long 192 kHz cadence probe on the same build also proves `post-coalesce-stale-v1` works for the measured `+2 -> same packet once` sequence at 432/480/576 frames, but 384 frames still hit a separate strict `delta=3` forward jump (`1375 -> 1378`).
+
+Therefore the current branch is product-matrix validated but not fully runtime-closed at 192k/384 long cadence.
 
 Preferred UI isolation branch:
 
 `exp/windows-arm64-asio-b5-control-panel`
 
-Before creating or editing it, verify current refs and show the intended base. Prefer the validated `ca37f0e...` runtime reference for the UI branch so the control-panel work does not accidentally depend on an unvalidated worker delta.
+Before creating or editing it, verify current refs and show the intended base.
+
+Preferred base after fresh verification is now the current B5 productization HEAD `4475fc17b70f372fe317fa201f201e8dc5543f9f`, because the stale-wake patch is no longer unbuilt/unvalidated. However, do not modify WaveRT/mux files in the control-panel branch; the 192k/384 delta=3 item remains a separate runtime follow-up.
 
 ---
 
@@ -142,6 +148,8 @@ Do not label 240 as `Current` when the host has 480 active. Keep `Current/Effect
 
 A combo box/list or slider+numeric display is acceptable, but arbitrary invalid values must not be accepted.
 
+The unresolved 192k/384 long-cadence delta=3 issue must not be hidden by silently changing the public minimum inside the UI. If runtime policy later changes, update the panel contract only after that runtime change is separately validated.
+
 ### Apply behavior
 
 - Cancel: no persisted or runtime change
@@ -224,9 +232,10 @@ Do not refactor for style:
 - mux worker policy
 - joined-worker shutdown sequence
 - `runtime-failsafe-v1`
+- `post-coalesce-stale-v1`
 - packet discontinuity / position regression / callback-index / copy checks
 
-The control panel is not a reason to modify notification timing.
+Do not attempt to solve the known 192k/384 `delta=3` cadence issue from the control-panel tab.
 
 ---
 
@@ -234,17 +243,18 @@ The control panel is not a reason to modify notification timing.
 
 1. verify GitHub main and B5 refs;
 2. read `CURRENT_HANDOFF.md` and this file fully;
-3. inspect validated `ca37f0e` `driver_b5.cpp`, CMake targets, ARM64EC adapter and Classic ARM64 adapter;
+3. inspect current B5 `driver_b5.cpp`, CMake targets, ARM64EC adapter and Classic ARM64 adapter;
 4. show proposed control-panel branch/base and exact files to touch;
-5. create the dedicated branch only after the base is clear;
-6. add UI state/persistence in small isolated source files where possible;
-7. replace `ASE_NotPresent` with native panel invocation;
-8. do not implement host reset until callback lifetime/reentrancy is understood;
-9. build ARM64EC + Classic ARM64;
-10. validate panel open/close/cancel before testing setting application;
-11. verify panel open creates no WaveRT pins;
-12. validate persistence and active-state rejection;
-13. only then consider a reset/reopen notification if needed.
+5. create `exp/windows-arm64-asio-b5-control-panel` from verified `4475fc17...` unless fresh evidence gives a concrete reason not to;
+6. freeze WaveRT/mux/runtime files on that branch;
+7. add UI state/persistence in small isolated source files where possible;
+8. replace `ASE_NotPresent` with native panel invocation;
+9. do not implement host reset until callback lifetime/reentrancy is understood;
+10. build ARM64EC + Classic ARM64;
+11. validate panel open/close/cancel before testing setting application;
+12. verify panel open creates no WaveRT pins;
+13. validate persistence and active-state rejection;
+14. only then consider a reset/reopen notification if needed.
 
 ---
 
@@ -266,4 +276,4 @@ Panel milestone is PASS when:
 - validated B5 streaming code is not refactored or weakened;
 - diagnostics remain available without realtime-path file I/O.
 
-After this passes, run the standard B5 product regression and one ordinary REAPER test. The separate post-coalesce stale-wake runtime patch can then be reconciled/validated explicitly rather than being hidden inside UI work.
+After this passes, run the standard B5 product regression and one ordinary REAPER test. Then return to the separate 192k/384 delta=3 runtime closure item before declaring B5 first release frozen.
