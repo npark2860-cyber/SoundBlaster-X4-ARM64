@@ -13,16 +13,14 @@
 #include <cwchar>
 #include <new>
 
-#if !defined(_M_ARM64) || defined(_M_ARM64EC)
-#error B5 Classic driver adapter must be built for native Windows ARM64.
-#endif
-
-#define private public
 #include "../asio-arm64-stage-b0/asio_callback_compat.h"
 #include "../asio-arm64-stage-b0/b5_identity.h"
 #include "../asio-arm64-stage-b0/preflight.h"
 #include "../asio-arm64-stage-b0/wavert_engine_b5.h"
-#undef private
+
+#if !defined(_M_ARM64) || defined(_M_ARM64EC)
+#error B5 Classic driver adapter must be built for native Windows ARM64.
+#endif
 
 namespace {
 class X4AsioDriverB5;
@@ -35,6 +33,8 @@ HANDLE WINAPI b5_create_mux_thread(
     LPDWORD);
 } // namespace
 
+// Keep Windows/COM/project headers outside the private-access macro. Only the
+// translation-unit-local B5 driver class is exposed to its mux implementation.
 #define CreateThread b5_create_mux_thread
 #define private public
 #include "../asio-arm64-stage-b0/driver_b5.cpp"
