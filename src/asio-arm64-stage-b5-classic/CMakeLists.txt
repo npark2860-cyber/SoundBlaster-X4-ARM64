@@ -17,7 +17,7 @@ add_library(x4-asio-arm64-b5 SHARED
   "${B5_SHARED_DIR}/driver_b5.cpp"
   "${B5_SHARED_DIR}/preflight.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wavert_engine_b5_classic.cpp"
-  "${B5_SHARED_DIR}/driver.def"
+  "${B5_SHARED_DIR}/driver_b5.def"
 )
 target_include_directories(x4-asio-arm64-b5 PRIVATE "${B5_SHARED_DIR}")
 target_compile_features(x4-asio-arm64-b5 PRIVATE cxx_std_17)
