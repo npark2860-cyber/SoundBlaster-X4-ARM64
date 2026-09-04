@@ -1,0 +1,106 @@
+name: Build ASIO B5 Productization
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64EC + ARM64 ASIO B5 productization
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout B5 product source
+        uses: actions/checkout@v6
+        with:
+          ref: exp/windows-arm64-asio-b5-capability-productization
+          fetch-depth: 0
+
+      - name: Verify validated B4D ancestry and frozen core
+        shell: pwsh
+        run: |
+          $base = "a95a95d014bcc1c3a521be41325841ae96dc8a61"
+          $head = git rev-parse HEAD
+          "Checked out B5: $head"
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE -ne 0) { throw "B5 is not descended from validated B4D $base" }
+          git diff --exit-code $base HEAD -- `
+            src/asio-arm64-stage-b0/driver_b4c.cpp `
+            src/asio-arm64-stage-b0/driver_b4d_arm64ec.cpp `
+            src/asio-arm64-stage-b0/preflight.cpp `
+            src/asio-arm64-stage-b0/preflight_b4d_arm64ec.cpp `
+            src/asio-arm64-stage-b0/wavert_engine_b4a.cpp `
+            src/asio-arm64-stage-b0/wavert_engine_b4d_arm64ec.cpp
+          if ($LASTEXITCODE -ne 0) { throw "Validated B4D core changed" }
+
+      - name: Configure ARM64EC B5
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b0 -B build/asio-b5-arm64ec -G "Visual Studio 17 2022" -A ARM64EC
+
+      - name: Build ARM64EC B5 driver and tools
+        shell: pwsh
+        run: >-
+          cmake --build build/asio-b5-arm64ec --config Release
+          --target x4-asio-arm64ec-b5 x4-asio-stage-b5-register
+          x4-asio-stage-b5-product-validation x4-asio-stage-b5-capability-probe
+          x4-asio-stage-b5-ks-probe --parallel
+
+      - name: Configure Classic ARM64 shared B5 source
+        shell: pwsh
+        run: cmake -S src/asio-arm64-stage-b5-classic -B build/asio-b5-arm64 -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Classic ARM64 B5 driver
+        shell: pwsh
+        run: cmake --build build/asio-b5-arm64 --config Release --target x4-asio-arm64-b5 --parallel
+
+      - name: Verify PE architectures
+        shell: pwsh
+        run: |
+          $ec = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll"
+          $classic = Join-Path $PWD "build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll"
+          foreach ($f in @($ec, $classic)) { if (-not (Test-Path $f)) { throw "Missing output: $f" } }
+
+          function Get-Machine([string]$file) {
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            return [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          }
+          $ecMachine = Get-Machine $ec
+          $classicMachine = Get-Machine $classic
+          if ($ecMachine -ne 0x8664) { throw ("ARM64EC expected PE 0x8664, got 0x{0:X4}" -f $ecMachine) }
+          if ($classicMachine -ne 0xAA64) { throw ("Classic ARM64 expected PE 0xAA64, got 0x{0:X4}" -f $classicMachine) }
+
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
+          $vs = & $vswhere -latest -products * -property installationPath
+          $link = Get-ChildItem -Path (Join-Path $vs "VC/Tools/MSVC/*/bin/Hostx64/x64/link.exe") | Sort-Object FullName | Select-Object -Last 1
+          if (-not $link) { throw "link.exe not found" }
+          $headers = (& $link.FullName /dump /headers $ec 2>&1 | Out-String)
+          if ($headers -notmatch "ARM64X") { Write-Host $headers; throw "ARM64EC DLL lacks ARM64X identification" }
+          "ARM64EC verified: $ec"
+          "Classic ARM64 verified: $classic"
+
+      - name: Package B5 validation bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll dist/
+          Copy-Item build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll dist/
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-register.exe dist/
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-product-validation.exe dist/
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-capability-probe.exe dist/
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-ks-probe.exe dist/
+          Copy-Item src/asio-arm64-stage-b0/install_and_validate_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b0/uninstall_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b0/README_B5_PRODUCTIZATION.md dist/
+          Compress-Archive -Path dist/* -DestinationPath dist/SoundBlaster-X4-ASIO-B5-Productization.zip -Force
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-ASIO-B5-Productization.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload B5 productization ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-B5-Productization
+          path: dist/SoundBlaster-X4-ASIO-B5-Productization.zip
+          if-no-files-found: error
+          retention-days: 14
