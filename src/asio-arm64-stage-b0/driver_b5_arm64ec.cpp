@@ -1,24 +1,31 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <winioctl.h>
+#include <ks.h>
+#include <ksmedia.h>
 #include <mmsystem.h>
 #include <avrt.h>
 
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cwchar>
 #include <new>
 
+#if !defined(_M_ARM64EC)
+#error B5 driver adapter must be compiled as ARM64EC.
+#endif
+
+// Expose only this translation unit's B5 internals so the high-rate worker
+// adapter can multiplex Render/Capture notification events without changing
+// the validated B4D source or the stable public WaveRT engine ABI.
+#define private public
 #include "asio_callback_compat.h"
 #include "b5_identity.h"
 #include "preflight.h"
 #include "wavert_engine_b5.h"
-
-#if !defined(_M_ARM64EC)
-#error B5 driver adapter must be compiled as ARM64EC.
-#endif
+#undef private
 
 static_assert(sizeof(long) == 4, "Windows ASIO ABI requires 32-bit long");
 static_assert(sizeof(void*) == 8, "B5 requires a 64-bit host ABI");
@@ -33,97 +40,25 @@ static_assert(sizeof(ASIOTimeCode) == 84, "Unexpected ARM64EC ASIOTimeCode size"
 static_assert(sizeof(ASIOTime) == 148, "Unexpected ARM64EC ASIOTime size");
 
 namespace {
-
-constexpr std::size_t kB5TraceBufferBytes = 2u * 1024u * 1024u;
-char g_b5_trace_buffer[kB5TraceBufferBytes]{};
-
-struct B5TraceBufferInitializer {
-    B5TraceBufferInitializer() {
-        // The B5 DLL uses the static CRT. Buffer its own stdout before any
-        // driver logging so per-notification diagnostics do not perform file
-        // I/O on the realtime worker hot path. The worker flushes after it has
-        // left the realtime loop, preserving diagnostics without scheduling
-        // interference.
-        std::setvbuf(stdout, g_b5_trace_buffer, _IOFBF, sizeof(g_b5_trace_buffer));
-    }
-};
-
-B5TraceBufferInitializer g_b5_trace_buffer_initializer{};
-
-struct B5MmcssStartContext {
-    LPTHREAD_START_ROUTINE routine = nullptr;
-    LPVOID parameter = nullptr;
-};
-
-DWORD WINAPI b5_mmcss_thread_entry(LPVOID opaque) {
-    auto* context = static_cast<B5MmcssStartContext*>(opaque);
-    if (!context || !context->routine) {
-        delete context;
-        return ERROR_INVALID_PARAMETER;
-    }
-
-    const LPTHREAD_START_ROUTINE routine = context->routine;
-    LPVOID parameter = context->parameter;
-    delete context;
-
-    DWORD task_index = 0;
-    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &task_index);
-    DWORD mmcss_error = mmcss ? ERROR_SUCCESS : GetLastError();
-    BOOL priority_ok = FALSE;
-    if (mmcss) {
-        priority_ok = AvSetMmThreadPriority(mmcss, AVRT_PRIORITY_CRITICAL);
-    } else {
-        priority_ok = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-    }
-
-    std::printf("B5 worker realtime scheduling mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
-                mmcss ? "Pro Audio" : "FALLBACK",
-                priority_ok ? "OK" : "FAIL",
-                task_index, mmcss_error, GetCurrentThreadId());
-
-    const DWORD result = routine(parameter);
-    if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
-
-    // Flush only after the worker loop has ended so diagnostic output cannot
-    // steal time from 96/192 kHz packet servicing.
-    std::fflush(stdout);
-    return result;
-}
-
-HANDLE WINAPI b5_create_mmcss_thread(
-    LPSECURITY_ATTRIBUTES thread_attributes,
-    SIZE_T stack_size,
-    LPTHREAD_START_ROUTINE start_routine,
-    LPVOID parameter,
-    DWORD creation_flags,
-    LPDWORD thread_id) {
-
-    auto* context = new (std::nothrow) B5MmcssStartContext{};
-    if (!context) {
-        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
-        return nullptr;
-    }
-    context->routine = start_routine;
-    context->parameter = parameter;
-
-    HANDLE thread = ::CreateThread(
-        thread_attributes,
-        stack_size,
-        &b5_mmcss_thread_entry,
-        context,
-        creation_flags,
-        thread_id);
-    if (!thread) delete context;
-    return thread;
-}
-
+class X4AsioDriverB5;
+HANDLE WINAPI b5_create_mux_thread(
+    LPSECURITY_ATTRIBUTES,
+    SIZE_T,
+    LPTHREAD_START_ROUTINE,
+    LPVOID,
+    DWORD,
+    LPDWORD);
 } // namespace
 
-// Inject realtime scheduling without touching the validated shared B5 driver
-// logic or the proven B4D source. The actual worker start routine executes from
-// an MMCSS Pro Audio trampoline and is reverted before thread exit.
-#define CreateThread b5_create_mmcss_thread
+// Replace only B5's worker thread creation. The original worker remains in the
+// shared source for reference, but this ARM64EC build executes the dual-event
+// multiplexer defined in driver_b5_mux_adapter.inl.
+#define CreateThread b5_create_mux_thread
+#define private public
 #define _M_ARM64 1
 #undef _M_ARM64EC
 #include "driver_b5.cpp"
+#undef private
 #undef CreateThread
+
+#include "driver_b5_mux_adapter.inl"
