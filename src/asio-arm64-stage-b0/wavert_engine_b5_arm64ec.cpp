@@ -34,3 +34,4 @@ static_assert(sizeof(void*) == 8, "B5 ARM64EC requires a 64-bit host ABI");
 #define _M_ARM64 1
 #undef _M_ARM64EC
 #include "wavert_engine_b5.cpp"
+#include "wavert_engine_b5_signaled.inl"
