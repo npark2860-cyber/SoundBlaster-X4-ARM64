@@ -29,7 +29,7 @@ if(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64EC")
     UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
   target_compile_options(x4-asio-stage-b5-arm64x-probe-arm64ec PRIVATE
     /W4 /permissive- /GR- /EHsc /Oy-)
-  target_link_libraries(x4-asio-stage-b5-arm64x-probe-arm64ec PRIVATE ole32.lib)
+  target_link_libraries(x4-asio-stage-b5-arm64x-probe-arm64ec PRIVATE ole32.lib uuid.lib)
   set_property(TARGET x4-asio-stage-b5-arm64x-probe-arm64ec PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -41,7 +41,7 @@ elseif(CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
     UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
   target_compile_options(x4-asio-stage-b5-arm64x-probe-arm64 PRIVATE
     /W4 /permissive- /GR- /EHsc /Oy-)
-  target_link_libraries(x4-asio-stage-b5-arm64x-probe-arm64 PRIVATE ole32.lib)
+  target_link_libraries(x4-asio-stage-b5-arm64x-probe-arm64 PRIVATE ole32.lib uuid.lib)
   set_property(TARGET x4-asio-stage-b5-arm64x-probe-arm64 PROPERTY
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
