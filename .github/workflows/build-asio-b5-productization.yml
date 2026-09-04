@@ -84,8 +84,8 @@ jobs:
 
           foreach ($f in @($ec, $classic)) {
             $ascii = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($f))
-            if ($ascii -notmatch "dual-event-mux-v3") {
-              throw "B5 DLL missing dual-event-mux-v3 runtime marker: $f"
+            if ($ascii -notmatch "dual-event-mux-v4-coalesce-recovery") {
+              throw "B5 DLL missing dual-event-mux-v4-coalesce-recovery runtime marker: $f"
             }
             if ($ascii -notmatch "runtime-failsafe-v1") {
               throw "B5 DLL missing runtime-failsafe-v1 marker: $f"
@@ -95,7 +95,7 @@ jobs:
           "ARM64EC verified: $ec"
           "Classic ARM64 verified: $classic"
           "ARM64EC 192k geometry probe verified: $geometry"
-          "B5 mux-v3 + runtime-failsafe-v1 markers verified in both DLLs"
+          "B5 mux-v4 coalesce recovery + runtime-failsafe-v1 markers verified in both DLLs"
 
       - name: Package B5 validation bundle
         shell: pwsh
