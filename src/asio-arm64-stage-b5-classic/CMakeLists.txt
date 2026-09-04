@@ -14,7 +14,7 @@ endif()
 set(B5_SHARED_DIR "${CMAKE_CURRENT_LIST_DIR}/../asio-arm64-stage-b0")
 
 add_library(x4-asio-arm64-b5 SHARED
-  "${B5_SHARED_DIR}/driver_b5.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/driver_b5_classic.cpp"
   "${B5_SHARED_DIR}/preflight.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/wavert_engine_b5_classic.cpp"
   "${B5_SHARED_DIR}/driver_b5.def"
@@ -36,6 +36,7 @@ target_link_libraries(x4-asio-arm64-b5 PRIVATE
   setupapi.lib
   ksuser.lib
   winmm.lib
+  avrt.lib
 )
 set_property(TARGET x4-asio-arm64-b5 PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
