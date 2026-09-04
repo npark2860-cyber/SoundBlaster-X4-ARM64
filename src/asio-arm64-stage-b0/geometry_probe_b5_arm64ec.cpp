@@ -290,7 +290,8 @@ int wmain() {
                 kSampleRate, kChannels, kBitsPerSample, kBytesPerFrame, kNotificationCount);
 
     wchar_t path[1024]{};
-    if (!find_x4_wave_path(path, _countof(path))) {
+    constexpr size_t path_chars = sizeof(path) / sizeof(path[0]);
+    if (!find_x4_wave_path(path, path_chars)) {
         std::puts("B5 192K GEOMETRY RESULT: FAIL X4 msft_wave not found");
         return 2;
     }
