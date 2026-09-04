@@ -197,7 +197,6 @@ std::vector<Frame> parse_frames(std::vector<std::uint8_t> const& data) {
     return frames;
 }
 std::vector<Frame> transact_capture(HANDLE handle, Query const& q, Logger& log, DWORD wait = 1000, DWORD quiet = 60) {
-    PurgeComm(handle, PURGE_RXCLEAR);
     if (!write_query(handle, q, log)) return {};
     auto const rx = collect_available(handle, wait, quiet, log);
     log.line("RX bytes=" + std::to_string(rx.size()));
@@ -210,7 +209,6 @@ std::vector<Frame> transact_capture(HANDLE handle, Query const& q, Logger& log, 
     return frames;
 }
 bool transact(HANDLE handle, Query const& q, Logger& log) {
-    PurgeComm(handle, PURGE_RXCLEAR);
     if (!write_query(handle, q, log)) return false;
     auto const rx = collect_available(handle, 1000, 60, log);
     log.line("RX bytes=" + std::to_string(rx.size()));
