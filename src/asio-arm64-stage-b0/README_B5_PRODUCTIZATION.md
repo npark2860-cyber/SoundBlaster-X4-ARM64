@@ -76,9 +76,11 @@ Runtime evidence first showed a render PACKETCOUNT transition `332 -> 334` at 19
 
 The 48 kHz result rules out a 192 kHz-only minimum-period explanation. The shared mechanism is the WaveRT auto-reset notification event: it is not a counting semaphore, so one event state can represent more than one elapsed hardware packet if user mode services it late.
 
-Current runtime marker:
+Current runtime markers:
 
-`dual-event-mux-v4-coalesce-recovery`
+- `dual-event-mux-v4-coalesce-recovery`
+- `packet-stats-observed-v1`
+- `post-coalesce-stale-v1`
 
 Mux v4 treats exactly one measured forward `delta=2` render transition as one explicit xrun/coalesced notification, not as packet corruption:
 
@@ -89,18 +91,34 @@ Mux v4 treats exactly one measured forward `delta=2` render transition as one ex
 5. the normal current-packet callback then runs and writes `currentPacket + 1`, which is still a future WaveRT packet;
 6. the recovery is counted as `renderCoalesces` / `renderDroppedBlocks` and surfaced in worker diagnostics.
 
-This is deliberately narrow. The following remain fatal:
+A dedicated cadence run then measured a second, narrower behavior: after a successful +2 recovery, the immediately following auto-reset render wake can report the same current PACKETCOUNT once more. Example:
 
-- render duplicate/backward packet transitions
-- render forward jumps larger than `delta=2`
-- capture packet discontinuity
+`1941 -> 1943` recovered, then immediate `1943 -> 1943` wake.
+
+B5 therefore arms exactly one post-coalesce stale-wake allowance after a successful +2 recovery. If the immediately following Render wake returns the same PACKETCOUNT:
+
+- no ASIO callback is issued;
+- no WaveRT Render write occurs;
+- callback/sample timeline and hardware-notification statistics do not advance;
+- `renderStaleWakes` increments;
+- the one-shot allowance clears and streaming continues.
+
+If the next Render wake advances normally, the allowance simply clears without special handling.
+
+This remains deliberately strict. Fatal conditions include:
+
+- any unarmed duplicate Render PACKETCOUNT
+- a second duplicate after the one consumed post-coalesce stale wake
+- backward Render packet transition
+- Render forward jump larger than `delta=2`
+- Capture packet discontinuity
 - render position regression
 - callback-index repetition outside the explicit catch-up sequence
 - render/capture copy failure
 - staging failure or sustained capture starvation
 - worker failure
 
-No ASIO host reset request is issued by this first recovery implementation. The catch-up callback preserves the existing ASIO timeline without introducing a host restart side effect.
+No ASIO host reset request is issued by this recovery implementation. The catch-up callback preserves the existing ASIO timeline without introducing a host restart side effect.
 
 ## Full-duplex timing
 
@@ -108,38 +126,39 @@ Render remains the ASIO callback/master clock while Capture runs as an independe
 
 For input-only operation, capture notifications drive the ASIO callback directly.
 
-## One-shot product validation
+## Product validation
 
 Run `install_and_validate_b5.cmd` with REAPER/other X4 playback closed and the Windows default output moved away from X4 if necessary.
 
-The script:
+The bundled matrix covers:
 
-1. registers B5 side-by-side;
-2. verifies registration;
-3. checks the immutable Render Pin 1 idle gate;
-4. runs the bundled silent lifecycle matrix covering:
-   - 48 kHz / 240 frames / output, 3 reopen cycles
-   - 48 kHz / 240 frames / full duplex, 2 cycles
-   - 96 kHz / 240 frames / full duplex, 2 cycles
-   - 48 kHz / 480 frames / output for 5 seconds (matches the observed REAPER host buffer)
-   - 192 kHz / 384 frames / output, 2 cycles
-   - 48 kHz / 96 frames / output
-   - 48 kHz / 4800 frames / output
-   - 48 kHz / 512 frames / compatibility output
-5. captures the B5 public ASIO contract after lifecycle PASS.
+- 48 kHz / 240 frames / output, 3 reopen cycles
+- 48 kHz / 240 frames / full duplex, 2 cycles
+- 96 kHz / 240 frames / full duplex, 2 cycles
+- 48 kHz / 480 frames / output for 5 seconds (matches observed REAPER host buffer)
+- 192 kHz / 384 frames / output, 2 cycles
+- 48 kHz / 96 frames / output
+- 48 kHz / 4800 frames / output
+- 48 kHz / 512 frames / compatibility output
 
-Output:
+The corrected packet-stats mux-v4 build returned a full `B5 INSTALL + PRODUCT VALIDATION: PASS` with the REAPER-matched 48k/480 case completing 500 callbacks, `stop=0`, and `workerJoined=YES`.
 
-`B5_PRODUCT_VALIDATION_REPORT.txt`
+A successful recovery may legitimately show non-zero `renderCoalesces` / `renderDroppedBlocks` and, when the measured stale-wake sequence occurs, non-zero `renderStaleWakes`, while strict packet/position/index/copy counters remain zero. That represents an observed xrun that the driver recovered from rather than a perfect-delivery claim.
 
-A successful v4 run may legitimately show non-zero `renderCoalesces` / `renderDroppedBlocks` while still returning `stop=0`, provided strict packet discontinuities, position/index/copy failures and worker failure remain zero. That represents an observed one-block xrun that the driver recovered from rather than a silent integrity pass.
+If the first idle gate is BUSY or indeterminate, validation stops before lifecycle work. Do not bypass it.
 
-If the first idle gate is BUSY or indeterminate, the script stops before lifecycle work. Do not bypass it.
+## 192 kHz cadence probe
 
-## 192 kHz cadence probe status
+`probe_b5_192k_cadence.cmd` is now the direct regression test for the post-coalesce stale-wake fix because it reproduced the sequence above.
 
-`probe_b5_192k_cadence.cmd` remains packaged as a diagnostic tool, but the later 48 kHz `74 -> 76` evidence supersedes the earlier idea that this was primarily a 192 kHz buffer-period problem. Do not raise the 192 kHz public minimum merely to hide a notification coalescing event.
+Do not rerun the allocation geometry probe unless contradictory evidence appears. The 384-frame allocation minimum is already established.
 
-The immediate validation target is mux-v4 recovery across the normal full product matrix. Use the dedicated cadence probe only if later evidence again isolates a sample-rate-specific problem.
+After the stale-wake fix is built, run the cadence probe once. Desired evidence when a +2 occurs is:
 
-After the bundled validation passes, perform one normal REAPER 48 kHz / 480 audible playback test. If a fatal failure occurs, do not repeatedly retry; immediately collect `%TEMP%\B5_RUNTIME_FAILURE.txt`.
+- `B5 RENDER COALESCE RECOVERED ...`
+- optionally `B5 RENDER POST-COALESCE STALE WAKE consumed ...`
+- no worker fatal
+- strict packet/position/index/copy counters remain zero
+- `stop=0` / `workerJoined=YES`
+
+If cadence passes, run the bundled product validation once as final shared-worker regression, then perform one normal REAPER 48 kHz / 480 audible playback test. If a fatal failure occurs, do not repeatedly retry; immediately collect `%TEMP%\B5_RUNTIME_FAILURE.txt`.
