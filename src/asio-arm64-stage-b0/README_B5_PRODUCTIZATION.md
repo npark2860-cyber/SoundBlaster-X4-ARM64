@@ -50,6 +50,28 @@ The B5 validation driver uses a different CLSID and ASIO registry entry:
 
 The existing proven B4D entry remains untouched.
 
+## Runtime worker failure fail-safe
+
+A real REAPER playback test exposed a failure mode in which audio could turn into a sustained repeating `drone/buzz` while the host itself remained alive. The leading mechanism is a worker failure leaving the WaveRT render pin in RUN with the last cyclic contents still audible.
+
+B5 now carries runtime marker:
+
+`runtime-failsafe-v1`
+
+On any fatal mux/worker path:
+
+1. the pre-failure render/capture stats and error strings are snapshotted;
+2. both WaveRT render notification slots are overwritten with silence through the existing render copy API;
+3. no KSSTATE transition, pin close, dispose, or hardware teardown occurs inside the failing worker;
+4. the worker returns and the existing joined-worker-before-teardown rule remains authoritative;
+5. a one-shot failure record is emitted through `OutputDebugString` and written to:
+
+`%TEMP%\B5_RUNTIME_FAILURE.txt`
+
+The record contains rate, frames, callback/index/copy counters, render/capture packet and position counters, capture phase counters, engine messages, Win32 error value, and whether emergency silence succeeded.
+
+File/debug logging happens only after the emergency silence attempt so filesystem latency cannot prolong a repeating last-buffer tone.
+
 ## Full-duplex timing
 
 Mux v3 keeps Render as the ASIO callback/master clock while Capture runs as an independent producer. Capture packets are staged and the oldest available staged packet is supplied to the current ASIO input buffer. A short render/capture phase difference no longer causes an immediate false synchronization failure, while real packet discontinuity, copy failure, staging failure, sustained capture starvation, callback-index repetition, render-position regression, and worker failure remain fatal.
@@ -70,6 +92,7 @@ The script:
    - 48 kHz / 240 frames / full duplex, 2 cycles
    - 96 kHz / 240 frames / full duplex, 2 cycles
    - 192 kHz / 384 frames / output, 2 cycles
+   - 48 kHz / 480 frames / output for 5 seconds (matches the observed REAPER host buffer)
    - 48 kHz / 96 frames / output
    - 48 kHz / 4800 frames / output
    - 48 kHz / 512 frames / compatibility output
@@ -82,3 +105,5 @@ Output:
 If the first idle gate is BUSY or indeterminate, the script stops before lifecycle work. Do not bypass it.
 
 After the bundled validation passes, REAPER should show both the existing B4D entry and `Sound Blaster X4 ARM64 ASIO B5` for real playback/input validation.
+
+If real playback fails again, do not repeatedly retry. Immediately collect `%TEMP%\B5_RUNTIME_FAILURE.txt` and use that record as the next source of truth.
