@@ -33,6 +33,22 @@ static_assert(sizeof(ASIOTime) == 148, "Unexpected ARM64EC ASIOTime size");
 
 namespace {
 
+constexpr std::size_t kB5TraceBufferBytes = 2u * 1024u * 1024u;
+char g_b5_trace_buffer[kB5TraceBufferBytes]{};
+
+struct B5TraceBufferInitializer {
+    B5TraceBufferInitializer() {
+        // The B5 DLL uses the static CRT. Buffer its own stdout before any
+        // driver logging so per-notification diagnostics do not perform file
+        // I/O on the realtime worker hot path. The worker flushes after it has
+        // left the realtime loop, preserving diagnostics without scheduling
+        // interference.
+        std::setvbuf(stdout, g_b5_trace_buffer, _IOFBF, sizeof(g_b5_trace_buffer));
+    }
+};
+
+B5TraceBufferInitializer g_b5_trace_buffer_initializer{};
+
 struct B5MmcssStartContext {
     LPTHREAD_START_ROUTINE routine = nullptr;
     LPVOID parameter = nullptr;
@@ -66,6 +82,10 @@ DWORD WINAPI b5_mmcss_thread_entry(LPVOID opaque) {
 
     const DWORD result = routine(parameter);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+
+    // Flush only after the worker loop has ended so diagnostic output cannot
+    // steal time from 96/192 kHz packet servicing.
+    std::fflush(stdout);
     return result;
 }
 
