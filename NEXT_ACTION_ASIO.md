@@ -14,7 +14,15 @@ Never bypass BUSY gates, never intentionally recreate the historical active-rend
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@64e34b48714789ab17fba57be34b054f2170b4e9`
+Current branch HEAD:
+
+`exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
+
+Latest runtime-code commit:
+
+`64e34b48714789ab17fba57be34b054f2170b4e9`
+
+The branch HEAD after that commit only updates the B5 productization README.
 
 Required runtime/build markers:
 
