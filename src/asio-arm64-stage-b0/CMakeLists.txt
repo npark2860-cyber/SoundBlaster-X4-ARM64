@@ -76,6 +76,16 @@ target_compile_options(x4-asio-stage-b5-ks-probe PRIVATE /W4 /permissive- /GR- /
 target_link_libraries(x4-asio-stage-b5-ks-probe PRIVATE ole32.lib setupapi.lib uuid.lib)
 set_property(TARGET x4-asio-stage-b5-ks-probe PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# B5 192 kHz WaveRT geometry measurement. This tool never enters KSSTATE_RUN.
+# It checks the immutable Render Pin 1 local/global FREE gate before every
+# KsCreatePin and closes each measurement pin before trying the next geometry.
+add_executable(x4-asio-stage-b5-192k-geometry-probe geometry_probe_b5_arm64ec.cpp)
+target_compile_features(x4-asio-stage-b5-192k-geometry-probe PRIVATE cxx_std_17)
+target_compile_definitions(x4-asio-stage-b5-192k-geometry-probe PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+target_compile_options(x4-asio-stage-b5-192k-geometry-probe PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+target_link_libraries(x4-asio-stage-b5-192k-geometry-probe PRIVATE setupapi.lib uuid.lib ksuser.lib)
+set_property(TARGET x4-asio-stage-b5-192k-geometry-probe PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 # B5 productized side-by-side ARM64EC driver. Validated B4D sources above remain untouched.
 add_library(x4-asio-arm64ec-b5 SHARED
   driver_b5_arm64ec.cpp
