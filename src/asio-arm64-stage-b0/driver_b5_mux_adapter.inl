@@ -1,127 +1,11 @@
 // B5 high-rate worker adapter.
 //
 // Included by the ARM64EC and Classic ARM64 driver translation units after
-// driver_b5.cpp has been included with its private members exposed locally.
-// This keeps the validated B4D source untouched while replacing only B5's
-// worker scheduling path.
+// driver_b5.cpp. The driver class is translation-unit-local and exposed only
+// to this adapter; WaveRT engine internals remain private and are reached only
+// through the public signaled-notification API.
 
 namespace {
-
-enum class B5MuxCaptureResult {
-    Packet,
-    NoData,
-    Failed,
-};
-
-KSPROPERTY b5_mux_property(const GUID& set, ULONG id) {
-    KSPROPERTY property{};
-    property.Set = set;
-    property.Id = id;
-    property.Flags = KSPROPERTY_TYPE_GET;
-    return property;
-}
-
-bool b5_mux_note_packet(X4WaveRtEngineB5& engine, ULONG packet_number) {
-    if (engine.have_previous_packet_ && packet_number != engine.previous_packet_ + 1) {
-        ++engine.stats_.packet_discontinuities;
-        engine.previous_packet_ = packet_number;
-        engine.stats_.last_packet = packet_number;
-        return false;
-    }
-    engine.previous_packet_ = packet_number;
-    engine.have_previous_packet_ = true;
-    ++engine.stats_.notifications;
-    engine.stats_.last_packet = packet_number;
-    return true;
-}
-
-bool b5_mux_query_render(X4AsioDriverB5* self, ULONG* packet_out) {
-    if (!self || !packet_out || self->render_.pin_ == INVALID_HANDLE_VALUE) return false;
-
-    ULONG packet = 0;
-    KSPROPERTY packet_property = b5_mux_property(
-        KSPROPSETID_RtAudio, KSPROPERTY_RTAUDIO_PACKETCOUNT);
-    DWORD returned = 0;
-    if (!DeviceIoControl(
-            self->render_.pin_, IOCTL_KS_PROPERTY,
-            &packet_property, sizeof(packet_property),
-            &packet, sizeof(packet), &returned, nullptr)) {
-        sprintf_s(self->render_.last_message_, sizeof(self->render_.last_message_),
-                  "B5 RENDER PACKETCOUNT FAILED Win32=%lu", GetLastError());
-        return false;
-    }
-
-    KSAUDIO_PRESENTATION_POSITION position{};
-    KSPROPERTY position_property = b5_mux_property(
-        KSPROPSETID_RtAudio, KSPROPERTY_RTAUDIO_PRESENTATION_POSITION);
-    if (!DeviceIoControl(
-            self->render_.pin_, IOCTL_KS_PROPERTY,
-            &position_property, sizeof(position_property),
-            &position, sizeof(position), &returned, nullptr)) {
-        sprintf_s(self->render_.last_message_, sizeof(self->render_.last_message_),
-                  "B5 RENDER PRESENTATION_POSITION FAILED Win32=%lu", GetLastError());
-        return false;
-    }
-
-    const UINT64 blocks = position.u64PositionInBlocks;
-    if (self->render_.have_previous_position_ &&
-        blocks < self->render_.previous_position_) {
-        ++self->render_.stats_.position_regressions;
-        self->render_.previous_position_ = blocks;
-        return false;
-    }
-    self->render_.previous_position_ = blocks;
-    self->render_.have_previous_position_ = true;
-
-    if (!b5_mux_note_packet(self->render_, packet)) {
-        sprintf_s(self->render_.last_message_, sizeof(self->render_.last_message_),
-                  "B5 RENDER packet discontinuity previous/current=%lu/%lu",
-                  self->render_.previous_packet_ > 0 ? self->render_.previous_packet_ - 1 : 0,
-                  packet);
-        return false;
-    }
-
-    *packet_out = packet;
-    return true;
-}
-
-B5MuxCaptureResult b5_mux_query_capture(
-    X4AsioDriverB5* self,
-    ULONG* packet_out,
-    BOOL* more_data_out) {
-
-    if (!self || !packet_out || !more_data_out ||
-        self->capture_.pin_ == INVALID_HANDLE_VALUE) {
-        return B5MuxCaptureResult::Failed;
-    }
-
-    KSRTAUDIO_GETREADPACKET_INFO info{};
-    KSPROPERTY property = b5_mux_property(
-        KSPROPSETID_RtAudio, KSPROPERTY_RTAUDIO_GETREADPACKET);
-    DWORD returned = 0;
-    if (!DeviceIoControl(
-            self->capture_.pin_, IOCTL_KS_PROPERTY,
-            &property, sizeof(property),
-            &info, sizeof(info), &returned, nullptr)) {
-        const DWORD error = GetLastError();
-        if (error == ERROR_NOT_READY) {
-            return B5MuxCaptureResult::NoData;
-        }
-        sprintf_s(self->capture_.last_message_, sizeof(self->capture_.last_message_),
-                  "B5 CAPTURE GETREADPACKET FAILED Win32=%lu", error);
-        return B5MuxCaptureResult::Failed;
-    }
-
-    if (!b5_mux_note_packet(self->capture_, info.PacketNumber)) {
-        sprintf_s(self->capture_.last_message_, sizeof(self->capture_.last_message_),
-                  "B5 CAPTURE packet discontinuity at packet=%lu", info.PacketNumber);
-        return B5MuxCaptureResult::Failed;
-    }
-
-    *packet_out = info.PacketNumber;
-    *more_data_out = info.MoreData;
-    return B5MuxCaptureResult::Packet;
-}
 
 bool b5_mux_copy_capture(X4AsioDriverB5* self, ULONG packet_number) {
     const long buffer_index = static_cast<long>(packet_number % kNotificationCount);
@@ -186,11 +70,49 @@ bool b5_mux_dispatch_callback(
     return true;
 }
 
+bool b5_mux_render_event(X4AsioDriverB5* self, ULONG* packet_out) {
+    const auto before = self->render_.stats();
+    ULONG packet = 0;
+    BOOL more_data = FALSE;
+    const X4WaveRtB5ProcessResult result =
+        self->render_.process_signaled_notification(
+            &packet, &more_data, nullptr, nullptr, false);
+
+    if (result != X4WaveRtB5ProcessResult::Notification) return false;
+
+    const auto after = self->render_.stats();
+    if (after.packet_discontinuities != before.packet_discontinuities ||
+        after.position_regressions != before.position_regressions) {
+        return false;
+    }
+
+    *packet_out = packet;
+    return true;
+}
+
+X4WaveRtB5ProcessResult b5_mux_capture_event(
+    X4AsioDriverB5* self,
+    ULONG* packet_out,
+    BOOL* more_data_out) {
+
+    const ULONG before_discontinuities =
+        self->capture_.stats().packet_discontinuities;
+    const X4WaveRtB5ProcessResult result =
+        self->capture_.process_signaled_notification(
+            packet_out, more_data_out, nullptr, nullptr, false);
+
+    if (result == X4WaveRtB5ProcessResult::Notification &&
+        self->capture_.stats().packet_discontinuities != before_discontinuities) {
+        return X4WaveRtB5ProcessResult::Failed;
+    }
+    return result;
+}
+
 DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     if (!self || !self->stop_event_) return ERROR_INVALID_PARAMETER;
 
     std::printf(
-        "B5 worker START adapter=dual-event-mux-v1 thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
+        "B5 worker START adapter=dual-event-mux-v2 thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
         GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
         self->render_selected_ ? 1 : 0, self->capture_selected_ ? 1 : 0);
 
@@ -199,15 +121,15 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
 
     auto fail_worker = [&](const char* direction, const char* message) -> DWORD {
         InterlockedExchange(&self->worker_failed_, 1);
-        std::printf("B5 worker %s failed: %s\n", direction, message ? message : "unknown");
+        std::printf("B5 worker %s failed: %s\n",
+                    direction, message ? message : "unknown");
         return ERROR_GEN_FAILURE;
     };
 
     if (self->render_selected_ && self->capture_selected_) {
-        // Capture gets the lower wait index intentionally. If both auto-reset
-        // events are signaled when the thread wakes, consume capture first so
-        // an input packet cannot be starved by a continuously arriving render
-        // event at 96/192 kHz rates.
+        // Capture has the lower wait index intentionally. If both auto-reset
+        // events are signaled, consume input first so capture cannot be starved
+        // by the render cadence at 96 kHz.
         HANDLE handles[3] = {
             self->stop_event_,
             self->capture_.notification_event(),
@@ -268,13 +190,15 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
                 do {
                     ULONG capture_packet = 0;
                     more_data = FALSE;
-                    const B5MuxCaptureResult capture_result =
-                        b5_mux_query_capture(self, &capture_packet, &more_data);
-                    if (capture_result == B5MuxCaptureResult::NoData) {
+                    const X4WaveRtB5ProcessResult capture_result =
+                        b5_mux_capture_event(
+                            self, &capture_packet, &more_data);
+
+                    if (capture_result == X4WaveRtB5ProcessResult::NoData) {
                         ++capture_not_ready;
                         break;
                     }
-                    if (capture_result == B5MuxCaptureResult::Failed) {
+                    if (capture_result != X4WaveRtB5ProcessResult::Notification) {
                         return fail_worker("CAPTURE", self->capture_.last_message());
                     }
                     if (!b5_mux_copy_capture(self, capture_packet)) {
@@ -282,10 +206,18 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
                     }
 
                     const ULONG slot = capture_packet % kNotificationCount;
+                    if (capture_slot_valid[slot] &&
+                        capture_slot_packet[slot] != capture_packet) {
+                        return fail_worker(
+                            "DUPLEX",
+                            "capture cyclic slot would overwrite an unconsumed packet");
+                    }
                     capture_slot_valid[slot] = true;
                     capture_slot_packet[slot] = capture_packet;
+
                     if (!try_dispatch_pending()) {
-                        return fail_worker("DUPLEX", "capture/render synchronization failed");
+                        return fail_worker(
+                            "DUPLEX", "capture/render synchronization failed");
                     }
 
                     if (more_data) ++capture_more_data;
@@ -299,13 +231,14 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
                 }
 
                 ULONG render_packet = 0;
-                if (!b5_mux_query_render(self, &render_packet)) {
+                if (!b5_mux_render_event(self, &render_packet)) {
                     return fail_worker("RENDER", self->render_.last_message());
                 }
                 pending_render = true;
                 pending_render_packet = render_packet;
                 if (!try_dispatch_pending()) {
-                    return fail_worker("DUPLEX", "render/capture synchronization failed");
+                    return fail_worker(
+                        "DUPLEX", "render/capture synchronization failed");
                 }
             }
         }
@@ -325,7 +258,7 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             }
 
             ULONG render_packet = 0;
-            if (!b5_mux_query_render(self, &render_packet)) {
+            if (!b5_mux_render_event(self, &render_packet)) {
                 return fail_worker("RENDER", self->render_.last_message());
             }
             const long buffer_index = static_cast<long>(
@@ -353,18 +286,21 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             do {
                 ULONG capture_packet = 0;
                 more_data = FALSE;
-                const B5MuxCaptureResult capture_result =
-                    b5_mux_query_capture(self, &capture_packet, &more_data);
-                if (capture_result == B5MuxCaptureResult::NoData) {
+                const X4WaveRtB5ProcessResult capture_result =
+                    b5_mux_capture_event(
+                        self, &capture_packet, &more_data);
+
+                if (capture_result == X4WaveRtB5ProcessResult::NoData) {
                     ++capture_not_ready;
                     break;
                 }
-                if (capture_result == B5MuxCaptureResult::Failed) {
+                if (capture_result != X4WaveRtB5ProcessResult::Notification) {
                     return fail_worker("CAPTURE", self->capture_.last_message());
                 }
                 if (!b5_mux_copy_capture(self, capture_packet)) {
                     return fail_worker("CAPTURE", self->capture_.last_message());
                 }
+
                 const long buffer_index = static_cast<long>(
                     capture_packet % kNotificationCount);
                 if (!b5_mux_dispatch_callback(
@@ -378,7 +314,7 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     }
 
     std::printf(
-        "B5 worker EXIT adapter=dual-event-mux-v1 thread=%lu captureNotReady=%lu captureMoreData=%lu\n",
+        "B5 worker EXIT adapter=dual-event-mux-v2 thread=%lu captureNotReady=%lu captureMoreData=%lu\n",
         GetCurrentThreadId(), capture_not_ready, capture_more_data);
     return ERROR_SUCCESS;
 }
@@ -398,7 +334,7 @@ DWORD WINAPI b5_mux_thread_entry(LPVOID parameter) {
     }
 
     std::printf(
-        "B5 worker realtime adapter=dual-event-mux-v1 mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
+        "B5 worker realtime adapter=dual-event-mux-v2 mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
         mmcss ? "Pro Audio" : "FALLBACK",
         priority_ok ? "OK" : "FAIL",
         task_index, mmcss_error, GetCurrentThreadId());
