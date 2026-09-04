@@ -117,6 +117,8 @@ public:
         InterlockedExchange64(&sample_position_, 0);
         InterlockedExchange64(&sample_timestamp_ns_, 0);
 
+        // Immutable safety rule: the proven Render Pin 1 local + global gate
+        // must be FREE before this driver will permit any later pin creation.
         const X4InstancePreflightResult preflight = run_x4_instance_preflight();
         if (!preflight.device_found) {
             strcpy_s(last_error_, "B5 init FAILED: X4 msft_wave not found");
@@ -193,6 +195,8 @@ public:
             return ASE_NoMemory;
         }
 
+        // Capture starts first so a full-duplex callback can obtain its first
+        // completed packet before the render-driven callback consumes it.
         if (capture_selected_ && !capture_.start_run()) {
             strcpy_s(last_error_, capture_.last_message());
             CloseHandle(stop_event_);
