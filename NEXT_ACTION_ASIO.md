@@ -11,6 +11,7 @@ Read first:
 1. `CURRENT_HANDOFF.md`
 2. `NEXT_ACTION_ASIO_CONTROL_PANEL.md`
 3. `PROMPT_ASIO_CONTROL_PANEL.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
 
 GitHub is source of truth. Verify actual refs before editing.
 
@@ -22,27 +23,52 @@ Validated B4D fallback remains frozen:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-Last runtime-validated B5 reference:
+Earlier real-audible REAPER reference:
 
 `ca37f0e8427227733cd6082a50e20101312e3333`
 
-That built bundle returned full product-validation PASS and the user subsequently reported normal ordinary REAPER playback at the already observed 48 kHz / 480-sample host setting.
+The user explicitly reported ordinary REAPER playback was normal on that built bundle.
 
-Current B5 productization branch is newer:
+Current B5 productization branch:
 
 `exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
 
-Latest runtime code there:
+Latest runtime-code commit:
 
 `64e34b48714789ab17fba57be34b054f2170b4e9`
 
-It adds `post-coalesce-stale-v1`, but **that newer runtime delta is still unbuilt/unvalidated**. Keep it separate from the validated reference and do not make panel work depend on it.
+This current branch is no longer unbuilt. The latest `post-coalesce-stale-v1` bundle was built and returned a full product validation PASS on 2026-09-04 16:32:53.73.
+
+Latest product matrix PASS includes:
+
+- 48k/240 output x3
+- 48k/240 duplex x2
+- 96k/240 duplex x2
+- REAPER-matched 48k/480 output for 5 seconds: 500 callbacks, stop=0, workerJoined=YES
+- 192k/384 output x2
+- 48k/96
+- 48k/4800
+- 48k/512 compatibility
+- ASIO capability probe
+
+Latest dedicated 192 kHz cadence result:
+
+- 384 frames: strict FAIL on `1375 -> 1378`, delta=3
+- 432 frames: PASS x2 while actually recovering +2 coalesces and consuming post-coalesce stale wakes
+- 480 frames: PASS x2 with the same recovery path exercised
+- 576 frames: PASS x2 with recovery exercised
+
+Therefore `post-coalesce-stale-v1` is proven to work for the measured `+2 -> same packet once` sequence, but B5 runtime is not completely closed because 192k/384 can still produce an unrecoverable forward delta=3 in the long cadence probe.
+
+Do not weaken `delta > 2` from the control-panel work. Keep that runtime issue separate.
+
+The 192 kHz allocation geometry is unchanged: 384 is still the first accepted size and 432..960 are accepted. Do not rerun geometry without contradictory evidence.
 
 ---
 
 ## Control-panel target
 
-Current validated-source behavior:
+Current behavior:
 
 `ASIOError controlPanel() override { return ASE_NotPresent; }`
 
@@ -76,7 +102,13 @@ Preferred control-panel work branch:
 
 `exp/windows-arm64-asio-b5-control-panel`
 
-Use validated `ca37f0e...` as the runtime reference/base unless fresh GitHub inspection gives a concrete reason not to. Do not mix the unvalidated stale-wake runtime delta into UI work implicitly. Reconcile the two explicitly later.
+Preferred base after fresh ref verification:
+
+`4475fc17b70f372fe317fa201f201e8dc5543f9f`
+
+Reason: this current B5 source has now been built and product-matrix validated and contains the verified one-shot post-coalesce stale-wake behavior.
+
+However, freeze the WaveRT/mux runtime files on the UI branch. The known 192k/384 long-cadence delta=3 issue is a separate runtime task and must not be mixed into control-panel implementation.
 
 Do not alter B4D. Do not refactor WaveRT/mux code for UI cleanliness.
 
@@ -97,4 +129,4 @@ Panel-first validation:
 9. active buffers/RUN cannot be mutated unsafely;
 10. any reset/reopen notification is separately validated.
 
-After panel PASS, run the normal B5 product matrix and one ordinary REAPER check. Then finish real output + real stereo input validation at 48/96 kHz, freeze B5 first release, and resume CTCDC/CTIntrfu work.
+After panel PASS, run the normal B5 product matrix and one ordinary REAPER check. Then close the separate 192k/384 delta=3 runtime item, finish real output + real stereo input validation at 48/96 kHz, freeze B5 first release, and resume CTCDC/CTIntrfu work.
