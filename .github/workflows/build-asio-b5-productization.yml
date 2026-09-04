@@ -45,7 +45,7 @@ jobs:
           cmake --build build/asio-b5-arm64ec --config Release
           --target x4-asio-arm64ec-b5 x4-asio-stage-b5-register
           x4-asio-stage-b5-product-validation x4-asio-stage-b5-capability-probe
-          x4-asio-stage-b5-ks-probe --parallel
+          x4-asio-stage-b5-ks-probe x4-asio-stage-b5-192k-geometry-probe --parallel
 
       - name: Configure Classic ARM64 shared B5 source
         shell: pwsh
@@ -60,7 +60,8 @@ jobs:
         run: |
           $ec = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll"
           $classic = Join-Path $PWD "build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll"
-          foreach ($f in @($ec, $classic)) { if (-not (Test-Path $f)) { throw "Missing output: $f" } }
+          $geometry = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-stage-b5-192k-geometry-probe.exe"
+          foreach ($f in @($ec, $classic, $geometry)) { if (-not (Test-Path $f)) { throw "Missing output: $f" } }
 
           function Get-Machine([string]$file) {
             $bytes = [System.IO.File]::ReadAllBytes($file)
@@ -69,8 +70,10 @@ jobs:
           }
           $ecMachine = Get-Machine $ec
           $classicMachine = Get-Machine $classic
+          $geometryMachine = Get-Machine $geometry
           if ($ecMachine -ne 0x8664) { throw ("ARM64EC expected PE 0x8664, got 0x{0:X4}" -f $ecMachine) }
           if ($classicMachine -ne 0xAA64) { throw ("Classic ARM64 expected PE 0xAA64, got 0x{0:X4}" -f $classicMachine) }
+          if ($geometryMachine -ne 0x8664) { throw ("ARM64EC geometry probe expected PE 0x8664, got 0x{0:X4}" -f $geometryMachine) }
 
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
           $vs = & $vswhere -latest -products * -property installationPath
@@ -88,6 +91,7 @@ jobs:
 
           "ARM64EC verified: $ec"
           "Classic ARM64 verified: $classic"
+          "ARM64EC 192k geometry probe verified: $geometry"
           "B5 mux v3 runtime marker verified in both DLLs"
 
       - name: Package B5 validation bundle
@@ -100,7 +104,9 @@ jobs:
           Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-product-validation.exe dist/
           Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-capability-probe.exe dist/
           Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-ks-probe.exe dist/
+          Copy-Item build/asio-b5-arm64ec/Release/x4-asio-stage-b5-192k-geometry-probe.exe dist/
           Copy-Item src/asio-arm64-stage-b0/install_and_validate_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b0/probe_b5_192k_geometry.cmd dist/
           Copy-Item src/asio-arm64-stage-b0/uninstall_b5.cmd dist/
           Copy-Item src/asio-arm64-stage-b0/README_B5_PRODUCTIZATION.md dist/
           Compress-Archive -Path dist/* -DestinationPath dist/SoundBlaster-X4-ASIO-B5-Productization.zip -Force
