@@ -35,7 +35,7 @@ At the start of a later chat, verify actual GitHub heads again. Do not reconstru
 9. `NEXT_ACTION_ASIO.md`
 10. older B5/B4D histories only as needed
 
-CTCDC remains deferred until the B5 first-release ASIO host-level pass is closed.
+CTCDC remains deferred until the B5 first-release ASIO product surface and host-level pass are closed.
 
 ---
 
@@ -257,14 +257,49 @@ The B5 silent product harness now proves:
 
 ---
 
+# Current missing product surface — ASIO control panel
+
+The B5 driver still implements:
+
+`ASIOError controlPanel() override { return ASE_NotPresent; }`
+
+This is the immediate next milestone and must be completed before final REAPER real-signal validation.
+
+Previously agreed direction:
+
+- build our own native control panel;
+- do not load/reuse Creative's control-panel binary;
+- use the official panel only as a visual/UX reference for a compact latency-setting dialog;
+- make the UI look like a credible product control panel, not a debug utility.
+
+First control-panel scope:
+
+- `IASIO::controlPanel()` opens a native Win32 dialog;
+- current sample rate is visible;
+- buffer/latency setting is the main editable control;
+- effective latency is shown in frames and milliseconds;
+- 48/96 kHz obey 96..4800 / step48 / preferred240;
+- 192 kHz obey 384..4800 / step48 / preferred384;
+- 512 compatibility remains accepted;
+- opening the panel never creates a WaveRT pin;
+- active ASIO buffers/RUN are never mutated underneath the host;
+- Apply/OK/Cancel are deterministic;
+- a setting change is persisted for the next safe create/reopen path;
+- if host reset/restart is required, use the ASIO host notification path instead of altering live hardware state.
+
+Do not alter the just-passed streaming core merely to implement the UI.
+
+---
+
 # What is NOT yet proven
 
 Do not infer these from the silent harness:
 
-1. audible real 24-bit program output through B5 in REAPER;
-2. real non-zero stereo capture while output is active;
-3. longer DAW-load stability;
-4. whether the 96 kHz capture phase misses cause a real recording-quality problem.
+1. control-panel open/change/apply/reopen behavior;
+2. audible real 24-bit program output through B5 in REAPER;
+3. real non-zero stereo capture while output is active;
+4. longer DAW-load stability;
+5. whether the 96 kHz capture phase misses cause a real recording-quality problem.
 
 `inputNonzeroSamples=0` in the validation report only means the validation had no external signal; it is not proof of capture content failure or success.
 
@@ -278,15 +313,17 @@ Validated B4D core remains frozen. Do not alter or bypass it.
 
 # Immediate next action
 
-Do not change B5 code before host-level validation unless a concrete regression appears.
+Implement the B5 native ASIO control panel on the existing productization branch while keeping the passed streaming core frozen.
 
-Use the current B5 ZIP and REAPER ARM64EC:
+Required sequence:
 
-1. select `Sound Blaster X4 ARM64 ASIO B5`;
-2. test audible 24-bit output at 48 kHz first;
-3. enable a real stereo X4 input source and record/monitor while output remains active;
-4. verify both input channels receive real non-zero signal;
-5. stop, close/reopen the ASIO device, and repeat once;
-6. if stable, repeat at 96 kHz / 240 frames and specifically watch for dropout, drift, missing input blocks, or delayed capture.
+1. replace `controlPanel() -> ASE_NotPresent` with a native panel entry point;
+2. implement sample-rate-aware buffer/latency selection and persistence;
+3. never create/open WaveRT streaming pins merely from the panel;
+4. refuse unsafe live mutation while buffers/RUN are active;
+5. add a small helper/host validation for panel availability and safe setting persistence/reopen;
+6. rebuild/package with the existing manual workflow;
+7. validate the panel path;
+8. only then do REAPER real output + real stereo input validation at 48 kHz and 96 kHz.
 
-Only after real output + real input pass should the B5 first-release ASIO milestone be considered closed and CTCDC work resume.
+After control panel + real output + real input pass, freeze B5 first-release ASIO and resume deferred CTCDC/CTIntrfu native static analysis.
