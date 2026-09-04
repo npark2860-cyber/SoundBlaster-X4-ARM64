@@ -85,7 +85,9 @@ add_library(x4-asio-arm64ec-b5 SHARED
 )
 target_compile_features(x4-asio-arm64ec-b5 PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-arm64ec-b5 PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
-target_compile_options(x4-asio-arm64ec-b5 PRIVATE /W4 /permissive- /GR- /EHsc /Oy-)
+# C4324 is expected because B5 deliberately aligns its host audio buffers to
+# 64-byte cache-line boundaries. Suppress only this informational warning.
+target_compile_options(x4-asio-arm64ec-b5 PRIVATE /W4 /wd4324 /permissive- /GR- /EHsc /Oy-)
 target_link_libraries(x4-asio-arm64ec-b5 PRIVATE
   advapi32.lib
   uuid.lib
