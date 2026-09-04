@@ -21,6 +21,17 @@
 
 namespace {
 
+constexpr std::size_t kB5TraceBufferBytes = 2u * 1024u * 1024u;
+char g_b5_trace_buffer[kB5TraceBufferBytes]{};
+
+struct B5TraceBufferInitializer {
+    B5TraceBufferInitializer() {
+        std::setvbuf(stdout, g_b5_trace_buffer, _IOFBF, sizeof(g_b5_trace_buffer));
+    }
+};
+
+B5TraceBufferInitializer g_b5_trace_buffer_initializer{};
+
 struct B5MmcssStartContext {
     LPTHREAD_START_ROUTINE routine = nullptr;
     LPVOID parameter = nullptr;
@@ -54,6 +65,7 @@ DWORD WINAPI b5_mmcss_thread_entry(LPVOID opaque) {
 
     const DWORD result = routine(parameter);
     if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
+    std::fflush(stdout);
     return result;
 }
 
