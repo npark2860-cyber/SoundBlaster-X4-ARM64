@@ -36,6 +36,8 @@ constexpr ASIOSampleType kAsioInt24LSB = 17;
 constexpr ULONG kBytesPerAsioSample = 3;
 constexpr ULONG kRenderPinId = 1;
 constexpr ULONG kCapturePinId = 4;
+constexpr wchar_t kB5PreferencesKey[] = L"Software\\SoundBlaster-X4-ARM64\\ASIO B5";
+constexpr wchar_t kB5SampleRateValue[] = L"SampleRate";
 
 volatile LONG g_object_count = 0;
 volatile LONG g_lock_count = 0;
@@ -51,6 +53,49 @@ ASIOTimeStamp asio_system_time_ns() {
 
 bool supported_rate(ASIOSampleRate rate) {
     return rate == 48000.0 || rate == 96000.0 || rate == 192000.0;
+}
+
+ASIOSampleRate load_persisted_sample_rate() {
+    DWORD value = 0;
+    DWORD size = sizeof(value);
+    const LONG result = RegGetValueW(
+        HKEY_CURRENT_USER,
+        kB5PreferencesKey,
+        kB5SampleRateValue,
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &value,
+        &size);
+    if (result != ERROR_SUCCESS) return 48000.0;
+    const ASIOSampleRate rate = static_cast<ASIOSampleRate>(value);
+    return supported_rate(rate) ? rate : 48000.0;
+}
+
+bool save_persisted_sample_rate(ASIOSampleRate rate) {
+    if (!supported_rate(rate)) return false;
+    HKEY key = nullptr;
+    const LONG open_result = RegCreateKeyExW(
+        HKEY_CURRENT_USER,
+        kB5PreferencesKey,
+        0,
+        nullptr,
+        REG_OPTION_NON_VOLATILE,
+        KEY_SET_VALUE,
+        nullptr,
+        &key,
+        nullptr);
+    if (open_result != ERROR_SUCCESS) return false;
+
+    const DWORD value = static_cast<DWORD>(rate);
+    const LONG set_result = RegSetValueExW(
+        key,
+        kB5SampleRateValue,
+        0,
+        REG_DWORD,
+        reinterpret_cast<const BYTE*>(&value),
+        sizeof(value));
+    RegCloseKey(key);
+    return set_result == ERROR_SUCCESS;
 }
 
 bool capture_supported_rate(ASIOSampleRate rate) {
@@ -114,7 +159,7 @@ public:
         capture_.dispose();
         release_host_buffers();
         initialized_free_ = false;
-        sample_rate_ = 48000.0;
+        sample_rate_ = load_persisted_sample_rate();
         InterlockedExchange64(&sample_position_, 0);
         InterlockedExchange64(&sample_timestamp_ns_, 0);
 
@@ -329,7 +374,10 @@ public:
             return ASE_InvalidMode;
         }
         sample_rate_ = sampleRate;
-        sprintf_s(last_error_, sizeof(last_error_), "B5 sample rate selected %.0f Hz", sample_rate_);
+        const bool persisted = save_persisted_sample_rate(sample_rate_);
+        sprintf_s(last_error_, sizeof(last_error_),
+                  "B5 sample rate selected %.0f Hz persist=%s",
+                  sample_rate_, persisted ? "YES" : "NO");
         return ASE_OK;
     }
 
