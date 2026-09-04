@@ -2,130 +2,141 @@
 
 Updated: 2026-09-04 KST
 
-## Current validated baseline
+## Validated baseline
 
-Validated B4D source:
+B4D remains the proven fallback:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-Validated Classic ARM64 B4C source:
-
-`exp/windows-arm64-asio-com-stage-b4c-time-info@e23e9801a1dfefc421f02790e9b2dd10fc9442d8`
-
-Known-good B4D transport remains:
+Known-good B4D runtime:
 
 - REAPER ARM64EC real playback
 - 48 kHz
 - stereo output
 - signed 16-bit PCM
 - 512 ASIO frames
-- X4 `msft_wave`, Render Pin 1
-- WaveRT cyclic buffer 4096 bytes
-- NotificationCount=2
-- local + global BUSY ownership gates
+- Render Pin 1
+- local + global BUSY gates
 - joined worker stop
-- ASIO 2.x time-info callbacks
+- ASIO 2.x time-info
 
-Do not rewrite or re-prove B4D unless B5 introduces a regression.
-
----
-
-# B5-0 measurement state
-
-B5 branch:
-
-`exp/windows-arm64-asio-b5-capability-productization@bf5039e57ad0617db2e14269389f62c7e046bcb7`
-
-B5-0 capability tooling has now built and executed on the test system.
-
-First runtime report:
-
-`DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_BUSY_BLOCKED.md`
-
-The property-only KS probe succeeded and the immutable Render Pin 1 gate observed:
-
-- `C 0/1`
-- `G 1/1`
-- `BUSY=YES`
-- `KsCreatePin` never called
-
-The combined probe correctly stopped before Creative or independent ASIO lifecycle probing.
-
-## Static X4 capability evidence now known
-
-### Render Pin 1
-
-Advertised PCM combinations include:
-
-- 2 / 6 / 8 channels
-- 16-bit / 24-bit
-- 48 / 96 / 192 kHz
-
-### Capture Pin 4
-
-Advertised PCM combinations include stereo:
-
-- 16-bit at 48 / 96 kHz
-- 24-bit at 48 / 96 kHz
-
-Pin 4 is the current static candidate for the first narrow stereo input path.
-
-These KS ranges are capability evidence, not yet a complete ASIO product specification.
+Do not alter or re-prove B4D unless B5 exposes a concrete regression.
 
 ---
 
-# Immediate action — one clean combined capture
+# B5 capability matrix is now complete
 
-Do not start productization from the partial report yet.
+Second combined runtime capture result:
 
-Make Render Pin 1 globally idle, then run the existing `probe_b5.cmd` once more.
+`B5 COMBINED CAPABILITY PROBE RESULT: PASS`
 
-Preferred preparation:
+See:
 
-1. switch Windows default playback away from Sound Blaster X4 to another output device;
-2. close REAPER, foobar/media players, Creative App, and any browser/media process actively using X4;
-3. run `probe_b5.cmd` once;
-4. return the new `B5_CAPABILITY_REPORT.txt`.
+`DEBUG_HISTORY_20260904_ASIO_B5_CAPABILITY_RUNTIME_PASS_PRODUCTIZATION_IMPLEMENTED.md`
 
-If the report still says `G 1/1`, do not bypass BUSY and do not repeatedly retry. The next engineering step is to add ownership diagnostics.
+Measured Creative reference:
 
-## Missing behavioral matrix required before implementation
+- 2 inputs / 10 outputs
+- all channels `Int24LSB` type 17
+- buffers 96..4800, preferred 240, granularity 48
+- rates 48/96/192 kHz only
+- Internal Clock
+- preferred latency 240 in / 240 out
+- lifecycle reopen x3 PASS
 
-The clean report must capture Creative `SB USB RT ASIO` first, then the independent driver, including:
+Measured X4 KS ranges:
 
-- channel counts/names
-- raw ASIO sample types, especially exact 24-bit packing
-- buffer min/max/preferred/granularity
-- `canSampleRate()` matrix
-- latency reporting
-- clock sources
-- repeated create/start/stop/dispose/reopen behavior
+- Render Pin 1: 2/6/8ch, 16/24-bit, 48/96/192 kHz
+- Capture Pin 4: stereo, 16/24-bit, 48/96 kHz
+
+Independent B4D lifecycle x3 also re-passed in the same capture.
 
 ---
 
-# Then perform one B5 productization batch
+# B5 productization is implemented
 
-Do not return to A/B/C/D micro-stages and do not request user testing after every internal change.
+Current B5 branch:
 
-Once the clean Creative + KS matrix is available, implement on the same B5 branch in one coherent cycle:
+`exp/windows-arm64-asio-b5-capability-productization@de87abca5540a077e5a9d9bf9708738ccbefecd5`
 
-1. **24-bit output** using the measured ASIO + X4 format contract.
-2. **Additional sample rates** only from confirmed behavioral/static support.
-3. **Selectable buffer sizes** from the measured Creative contract while keeping 512 frames as a regression option.
-4. **Lifecycle/stability hardening** for repeated reopen/start/stop and longer playback.
-5. **Narrow stereo input** using the confirmed capture pin/format and its own ownership gate.
-6. **Classic ARM64 / ARM64EC maintainability** with shared functional source where practical.
+The B5 implementation was performed as one coherent batch. Validated B4D core files remain unchanged.
 
-Then produce one combined validation package.
+B5 validation identity is side-by-side:
 
-## Immutable safety rule
+`Sound Blaster X4 ARM64 ASIO B5`
+
+so the existing proven B4D entry remains available.
+
+Implemented B5 contract:
+
+- 2 outputs, `Int24LSB`
+- 2 inputs at 48/96 kHz, `Int24LSB`
+- output at 48/96/192 kHz
+- 192 kHz reports zero inputs
+- ASIO buffer contract 96..4800 frames, granularity 48, preferred 240
+- 512 frames accepted as a compatibility exception
+- Internal Clock
+- ASIO 2.x time-info
+- Render Pin 1 + Capture Pin 4 WaveRT paths
+- full-duplex capture-before-render start ordering
+- joined worker lifecycle
+- separate render/capture BUSY gates immediately before pin creation
+- shared functional B5 source for Classic ARM64 and ARM64EC
+
+## Immutable safety
 
 Never bypass BUSY.
 
-Never intentionally reproduce the historical active-render collision:
+Historical failure class remains:
 
 - `WDF_VIOLATION 0x10D`
 - Parameter 1 = 5
 - stale/destroyed `WDFUSBPIPE` path in `usbaudio2` recovery
 
-Every new render path must retain local/global ownership checks before pin creation. Input must establish and respect its own ownership state.
+B5 retains the proven Render Pin 1 gate at `init()` and re-checks the relevant render/capture pin directly before each `KsCreatePin`.
+
+---
+
+# Immediate action — one build, then one bundled runtime validation
+
+Manual workflow on `main`:
+
+`.github/workflows/build-asio-b5-productization.yml`
+
+Workflow name:
+
+`Build ASIO B5 Productization`
+
+## Step 1
+
+Run this workflow once.
+
+It builds both:
+
+- ARM64EC/ARM64X B5 validation driver and tools
+- Classic ARM64 B5 DLL from the same functional source
+
+If Actions fails, fix the compile issue on the same B5 branch. Do not create A/B/C/D-style micro-branches and do not ask for a hardware test until the full package builds.
+
+## Step 2
+
+After Actions PASS, download:
+
+`SoundBlaster-X4-ASIO-B5-Productization.zip`
+
+On the X4 test system:
+
+- close REAPER and other X4 playback;
+- move Windows default playback away from X4 if needed;
+- run `install_and_validate_b5.cmd` once;
+- return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+
+The script performs a single bundled silent matrix covering preferred/min/max/512 buffers, 48/96/192 output, full duplex at 48/96, repeated reopen, registration and BUSY safety.
+
+If the initial gate is BUSY/indeterminate, it stops before lifecycle work. Do not override it.
+
+## Step 3 — only after bundled runtime PASS
+
+Perform one final REAPER B5 real-use validation covering actual audible output plus stereo input. Do not split this into per-feature micro-tests.
+
+Until Actions compile PASS and the bundled runtime report pass, the new B5 transport is implemented but **not yet hardware-proven**.
