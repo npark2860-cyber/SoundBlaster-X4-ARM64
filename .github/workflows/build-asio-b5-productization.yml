@@ -90,12 +90,15 @@ jobs:
             if ($ascii -notmatch "runtime-failsafe-v1") {
               throw "B5 DLL missing runtime-failsafe-v1 marker: $f"
             }
+            if ($ascii -notmatch "packet-stats-observed-v1") {
+              throw "B5 DLL missing packet-stats-observed-v1 marker: $f"
+            }
           }
 
           "ARM64EC verified: $ec"
           "Classic ARM64 verified: $classic"
           "ARM64EC 192k geometry probe verified: $geometry"
-          "B5 mux-v4 coalesce recovery + runtime-failsafe-v1 markers verified in both DLLs"
+          "B5 mux-v4 + runtime-failsafe-v1 + packet-stats-observed-v1 markers verified in both DLLs"
 
       - name: Package B5 validation bundle
         shell: pwsh
