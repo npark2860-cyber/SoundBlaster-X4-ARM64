@@ -68,12 +68,16 @@ public:
     // B5 high-rate worker API: the caller has already observed this engine's
     // notification_event() as signaled. No additional wait occurs here.
     // Capture ERROR_NOT_READY is reported as NoData, not as a hard failure.
+    // A Render duplicate may be reported as NoData only when the mux explicitly
+    // arms one post-coalesce stale-wake allowance for the immediately following
+    // render wake. Unarmed duplicates remain strict packet discontinuities.
     X4WaveRtB5ProcessResult process_signaled_notification(
         ULONG* packet_number,
         BOOL* more_data,
         X4WaveRtB5NotificationObserver observer = nullptr,
         void* observer_context = nullptr,
-        bool trace_notification = false);
+        bool trace_notification = false,
+        bool allow_render_stale_duplicate = false);
 
     bool write_render_packet24(
         ULONG absolute_packet_number,
