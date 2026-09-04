@@ -2,131 +2,108 @@
 
 Updated: 2026-09-04 KST
 
-## Immediate milestone
+## Current milestone
 
-Proceed with the native B5 ASIO control panel in a fresh work tab.
+The native B5 control panel first-pass implementation is complete enough to freeze unless a concrete issue appears.
 
 Read first:
 
 1. `CURRENT_HANDOFF.md`
 2. `NEXT_ACTION_ASIO_CONTROL_PANEL.md`
-3. `PROMPT_ASIO_CONTROL_PANEL.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_POST_COALESCE_STALE_WAKE.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V4_STATS_ALIAS_REGRESSION.md`
 
-GitHub is source of truth. Verify actual refs before editing.
+GitHub is source of truth. Verify current refs before editing.
 
 ---
 
-## Runtime state to preserve
-
-Validated B4D fallback remains frozen:
-
-`exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
-
-Earlier real-audible REAPER reference:
-
-`ca37f0e8427227733cd6082a50e20101312e3333`
-
-The user explicitly reported ordinary REAPER playback was normal on that built bundle.
+## Runtime base to preserve
 
 Current B5 productization branch:
 
 `exp/windows-arm64-asio-b5-capability-productization@4475fc17b70f372fe317fa201f201e8dc5543f9f`
 
-Latest runtime-code commit:
+Current control-panel branch:
 
-`64e34b48714789ab17fba57be34b054f2170b4e9`
+`exp/windows-arm64-asio-b5-control-panel@7bc83f87b172f574064d086affe5e8ed1d6fbdff`
 
-This current branch is no longer unbuilt. The latest `post-coalesce-stale-v1` bundle was built and returned a full product validation PASS on 2026-09-04 16:32:53.73.
+Control-panel work preserves the validated runtime marker set:
 
-Latest product matrix PASS includes:
+- `dual-event-mux-v4-coalesce-recovery`
+- `runtime-failsafe-v1`
+- `packet-stats-observed-v1`
+- `post-coalesce-stale-v1`
 
-- 48k/240 output x3
-- 48k/240 duplex x2
-- 96k/240 duplex x2
-- REAPER-matched 48k/480 output for 5 seconds: 500 callbacks, stop=0, workerJoined=YES
-- 192k/384 output x2
-- 48k/96
-- 48k/4800
-- 48k/512 compatibility
-- ASIO capability probe
+Do not weaken runtime safety merely to simplify host/UI behavior.
 
-Latest dedicated 192 kHz cadence result:
-
-- 384 frames: strict FAIL on `1375 -> 1378`, delta=3
-- 432 frames: PASS x2 while actually recovering +2 coalesces and consuming post-coalesce stale wakes
-- 480 frames: PASS x2 with the same recovery path exercised
-- 576 frames: PASS x2 with recovery exercised
-
-Therefore `post-coalesce-stale-v1` is proven to work for the measured `+2 -> same packet once` sequence, but B5 runtime is not completely closed because 192k/384 can still produce an unrecoverable forward delta=3 in the long cadence probe.
-
-Do not weaken `delta > 2` from the control-panel work. Keep that runtime issue separate.
-
-The 192 kHz allocation geometry is unchanged: 384 is still the first accepted size and 432..960 are accepted. Do not rerun geometry without contradictory evidence.
+Validated B4D fallback remains frozen.
 
 ---
 
-## Control-panel target
+## Control-panel status
 
-Current behavior:
+ARM64EC / REAPER user evidence:
 
-`ASIOError controlPanel() override { return ASE_NotPresent; }`
+- panel opens;
+- REAPER sample rate was changed/applied to 96,000 Hz;
+- after ASIO reopen/reinitialization the panel still showed `96,000 Hz`;
+- current user report: no apparent panel problem.
 
-Replace this with an own native Win32 panel. No Creative binary reuse.
+The forced 48 kHz reset in `init()` was removed and successful supported `setSampleRate()` selections now persist per user.
 
-Required first-release behavior:
+Latest panel build also replaces the mojibake-prone Unicode bullet with ASCII `|`.
 
-- compact credible production UI
-- `Sound Blaster X4 ARM64 ASIO B5` identity
-- current/effective sample rate
-- current/effective buffer
-- frames + milliseconds
-- 48/96 kHz: 96..4800, step 48, preferred/default 240
-- 192 kHz: 384..4800, step 48, preferred/default 384
-- 512 compatibility option
-- show an active host buffer such as 480 as current/effective, not merely the fixed preferred 240
-- opening panel creates no WaveRT pins and does not alter hardware state
-- no live geometry mutation while buffers/RUN are active
-- deterministic Apply / OK / Cancel
-- persist the user's next-safe-open preference
-- explicitly define whether host reset/reopen is required
-- retain a lightweight diagnostics surface without callback-path file I/O
+ARM64EC and Classic ARM64 compile/link both pass. Classic runtime panel invocation is not yet separately verified.
 
-Important: the ASIO host supplies `bufferSize` to `createBuffers()`. Do not silently replace an explicit host buffer request with the panel preference. If `kAsioResetRequest` is considered, inspect callback lifetime/reentrancy first.
+Do not spend another cycle refactoring the panel unless a concrete issue is observed.
 
 ---
 
-## Isolation
+## Immediate ASIO engineering priority
 
-Preferred control-panel work branch:
+Return to the separate unresolved B5 runtime closure item:
 
-`exp/windows-arm64-asio-b5-control-panel`
+**192 kHz / 384-frame long-cadence strict forward `delta=3`.**
 
-Preferred base after fresh ref verification:
+Current known cadence state on the validated productization runtime:
 
-`4475fc17b70f372fe317fa201f201e8dc5543f9f`
+- 192k/384: strict FAIL on a forward `delta=3`
+- 192k/432: PASS x2 with real +2 coalesce / stale-wake recovery exercised
+- 192k/480: PASS x2 with recovery exercised
+- 192k/576: PASS x2 with recovery exercised
 
-Reason: this current B5 source has now been built and product-matrix validated and contains the verified one-shot post-coalesce stale-wake behavior.
+`post-coalesce-stale-v1` is proven for the measured `+2 -> same packet once` sequence. The 384-frame `delta=3` is a different condition and remains fatal by design.
 
-However, freeze the WaveRT/mux runtime files on the UI branch. The known 192k/384 long-cadence delta=3 issue is a separate runtime task and must not be mixed into control-panel implementation.
-
-Do not alter B4D. Do not refactor WaveRT/mux code for UI cleanliness.
+Do not simply relax `delta > 2` to make the probe pass.
 
 ---
 
-## Validation
+## Next runtime investigation rules
 
-Panel-first validation:
+The next runtime work should isolate why 192k/384 can advance by three packets under long cadence while larger accepted geometries remain recoverable.
 
-1. ARM64EC + Classic ARM64 build PASS;
-2. correct side-by-side registration;
-3. host can invoke the panel;
-4. open/cancel/close creates no WaveRT pins;
-5. current sample rate/buffer display is correct;
-6. buffer choices obey rate-specific contract + 512 exception;
-7. Cancel is no-op;
-8. Apply/OK persistence is deterministic;
-9. active buffers/RUN cannot be mutated unsafely;
-10. any reset/reopen notification is separately validated.
+Preserve these constraints:
 
-After panel PASS, run the normal B5 product matrix and one ordinary REAPER check. Then close the separate 192k/384 delta=3 runtime item, finish real output + real stereo input validation at 48/96 kHz, freeze B5 first release, and resume CTCDC/CTIntrfu work.
+- do not rerun allocation geometry without contradictory evidence;
+- 384 remains the first hardware-accepted allocation size;
+- do not change the public minimum merely to hide the cadence problem;
+- keep B4D unchanged;
+- keep BUSY and pre-pin ownership gates unchanged;
+- keep worker-join and fatal-silence behavior unchanged;
+- do not mix control-panel UI changes into the runtime experiment.
+
+Prefer one-variable runtime instrumentation/analysis over broad rewrites.
+
+---
+
+## After 192k/384 closure
+
+Only after the separate runtime item is understood and safely handled:
+
+1. confirm the final B5 runtime matrix;
+2. finish any still-required real output / real stereo input validation at 48/96 kHz;
+3. decide whether to merge/freeze the control-panel branch into the release line;
+4. freeze the B5 first release;
+5. resume deferred CTCDC/CTIntrfu work if the user chooses that track.
+
+Do not ask the user to repeat already completed audible REAPER or geometry tests without a concrete reason.
