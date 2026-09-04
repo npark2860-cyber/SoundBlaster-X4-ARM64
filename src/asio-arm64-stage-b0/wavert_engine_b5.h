@@ -5,6 +5,7 @@
 
 struct X4WaveRtB5Stats {
     ULONG notifications = 0;
+    ULONG notification_coalesces = 0;
     ULONG packet_discontinuities = 0;
     ULONG position_regressions = 0;
     ULONG hardware_buffer_writes = 0;
