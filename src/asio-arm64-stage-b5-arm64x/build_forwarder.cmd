@@ -14,10 +14,14 @@ where link.exe >nul 2>nul || (
   echo link.exe not found. Run this from an ARM64 Visual Studio Developer Command Prompt.
   exit /b 4
 )
+where lib.exe >nul 2>nul || (
+  echo lib.exe not found. Run this from an ARM64 Visual Studio Developer Command Prompt.
+  exit /b 5
+)
 
 set "SRC=%~dp0"
 set "OUT=%~f1"
-if not exist "%OUT%" mkdir "%OUT%" || exit /b 5
+if not exist "%OUT%" mkdir "%OUT%" || exit /b 6
 
 set "EMPTY_ARM64=%OUT%\empty_arm64.obj"
 set "EMPTY_X64=%OUT%\empty_x64.obj"
@@ -28,8 +32,20 @@ set "DLL_OUT=%OUT%\x4-asio-arm64x-b5.dll"
 cl /nologo /c /Fo"%EMPTY_ARM64%" "%SRC%empty.cpp" || exit /b 10
 cl /nologo /c /arm64EC /Fo"%EMPTY_X64%" "%SRC%empty.cpp" || exit /b 11
 
-link /nologo /lib /machine:arm64 /def:"%SRC%forward_arm64.def" /out:"%LIB_ARM64%" || exit /b 12
-link /nologo /lib /machine:x64 /def:"%SRC%forward_arm64ec.def" /out:"%LIB_X64%" || exit /b 13
+rem Modern VS toolsets expose import-library creation through LIB.EXE.
+rem This is equivalent to the ARM64X pure-forwarder documentation's
+rem historical "link /lib" form, but avoids LINK treating /lib as unknown.
+lib /nologo /machine:arm64 /def:"%SRC%forward_arm64.def" /out:"%LIB_ARM64%" || exit /b 12
+lib /nologo /machine:x64 /def:"%SRC%forward_arm64ec.def" /out:"%LIB_X64%" || exit /b 13
+
+if not exist "%LIB_ARM64%" (
+  echo ARM64 forward import library was not produced: %LIB_ARM64%
+  exit /b 12
+)
+if not exist "%LIB_X64%" (
+  echo x64/ARM64EC forward import library was not produced: %LIB_X64%
+  exit /b 13
+)
 
 link /nologo /dll /noentry /machine:arm64x ^
   /defArm64Native:"%SRC%forward_arm64.def" ^
