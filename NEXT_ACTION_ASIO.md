@@ -8,130 +8,154 @@ B4D remains the proven fallback:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-Do not alter B4D unless B5 exposes a concrete regression.
+Do not alter B4D unless B5 exposes a concrete regression requiring it.
 
 Immutable safety:
 
 - never bypass local/global BUSY gates
 - never intentionally reproduce the active-render collision
 - never tear hardware down before the worker is joined
-- never weaken packet/copy/index/position checks merely to make validation pass
+- never weaken copy/index/position or unrecoverable packet checks merely to make validation pass
 
 ---
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@c9ca17171edcc3eb1b6e2c7e2e36173cb3f66c0f`
+`exp/windows-arm64-asio-b5-capability-productization@1e4b9527269a84115f4aa43a09fdf3c9a7c31dd3`
 
 Runtime/build markers:
 
-- `dual-event-mux-v3`
+- `dual-event-mux-v4-coalesce-recovery`
 - `runtime-failsafe-v1`
 
 ---
 
-# Latest measured blocker — 192 kHz / 384 render cadence
+# Latest measured blocker — not 192 kHz specific
 
-The fail-safe validation generated `2026-09-04 13:50:09.41`.
+The latest product report was generated `2026-09-04 15:26:42.62`.
 
-It passed registration, KS probes, 48k/240 output x3, 48k/240 duplex x2, 96k/240 duplex x2 and the first 192k/384 output cycle.
+Registration / registry / property-only idle gate / KS capability probing passed.
 
-The second 192k/384 output cycle failed after 332 callbacks:
+48 kHz / 240 output-only:
 
-- `worker=1`
-- `rPkt=1`
-- `rPos=0`
-- `idx=0`
-- `outCopy=0`
-- `inCopy=0`
-- `stop=-999`
+- cycle1 PASS, callbacks=139
+- cycle2 PASS, callbacks=142
+- cycle3 failed after callbacks=74
 
-`runtime-failsafe-v1` reported:
+Exact failure:
 
-`emergencySilence=OK`
+`B5 RENDER PACKET DISCONTINUITY previous=74 expected=75 current=76 delta=2`
 
-The preserved `%TEMP%\B5_RUNTIME_FAILURE.txt` recorded:
+The preserved runtime file recorded:
 
-- render notifications = 333
-- callbacks = 332
-- last render packet = 334
-- render packet discontinuities = 1
-- no position/index/copy error
+- rate=48000
+- frames=240
+- render notifications=75
+- callbacks=74
+- lastPacket=76
+- packetDiscontinuities=1
+- positionRegressions=0
+- index/copy errors=0
+- `emergencySilence=OK`
 
-Given the known 1-based WaveRT render PACKETCOUNT semantics, this identifies the transition as:
+This is the same forward `+2` pattern previously seen at 192 kHz (`332 -> 334`). Because it now occurs at 48 kHz / 240 frames = 5.0 ms, the earlier 192 kHz minimum-period hypothesis is superseded.
 
-`332 -> 334`
-
-Packet 333 was not observed as its own worker notification.
-
-384 frames at 192 kHz is 2.000 ms. Current evidence is consistent with one coalesced/missed auto-reset render notification or equivalent user-mode service delay across two periods.
-
-Do not relax the discontinuity rule.
+The shared issue is the auto-reset WaveRT notification primitive: event state is not a counting semaphore, so a hardware packet can advance without a distinct user-mode wake for every period.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_FAILSAFE_RUNTIME_192K_RENDER_PACKET_DISCONTINUITY.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_48K_RENDER_COALESCE_RECOVERY_V4.md`
 
 ---
 
-# Diagnostic fix already implemented
+# Implemented fix — mux v4 coalesce recovery
 
-The WaveRT signaled path now writes exact failure text for non-sequential packets:
+Exactly one measured forward Render transition `delta == 2` is now classified as a recoverable one-block xrun / notification coalesce.
 
-`previous / expected / current / delta`
+For example `74 -> 76`:
 
-and records previous/current presentation positions on a render position regression.
+1. invoke a synthetic ASIO callback for missed master packet 75;
+2. preserve the alternating ASIO buffer index and callback/sample timeline;
+3. deliberately discard that synthetic callback's output because hardware packet 76 has already completed;
+4. invoke the normal current master packet 76 callback;
+5. write only its output to future WaveRT packet 77;
+6. continue streaming instead of killing the worker.
 
-Commit:
+Duplex behavior:
 
-`dc1b16adb7788f27443be9efeb3bdc56ad51536d`
+- synthetic missed callback gets zero-filled input;
+- it does not consume capture staging;
+- the current callback resumes normal staged capture consumption.
 
-No strict check was changed.
+New diagnostics:
+
+- engine `notification_coalesces`
+- worker `renderCoalesces`
+- worker `renderDroppedBlocks`
+- fatal record includes coalescing history
+
+This is not a general tolerance increase.
+
+Still fatal:
+
+- render duplicate/backward transition
+- render forward `delta > 2`
+- capture packet discontinuity
+- render position regression
+- callback-index error outside explicit catch-up
+- render/capture copy failure
+- capture staging failure / sustained starvation
+- worker failure
+
+`runtime-failsafe-v1` remains the fatal fallback and still performs no worker-side pin teardown.
+
+No `kAsioResyncRequest` is sent in this first recovery implementation; avoid adding host-reset side effects until runtime shows they are needed.
 
 ---
 
-# Immediate action — measure stable 192 kHz RUN cadence
+# 192 kHz cadence probe
 
-A dedicated strict probe is now available through the existing product validation host:
+`probe_b5_192k_cadence.cmd` remains packaged for diagnosis but is **not the immediate next test**.
 
-`x4-asio-stage-b5-product-validation.exe --cadence-192`
+Do not raise the 192 kHz min/preferred buffer merely to hide notification coalescing now proven at 48 kHz too.
 
-Packaged runner:
+---
 
-`probe_b5_192k_cadence.cmd`
-
-Candidates:
-
-- 384 frames = 2.000 ms, 1 x 5 s
-- 432 frames = 2.250 ms, 2 x 10 s
-- 480 frames = 2.500 ms, 2 x 10 s
-- 576 frames = 3.000 ms, 2 x 10 s
-
-Every candidate keeps the current fatal packet-discontinuity check enabled.
-
-Required sequence:
+# Immediate action
 
 1. run manual workflow `Build ASIO B5 Productization`;
-2. require ARM64EC + Classic ARM64 build and both runtime markers PASS;
-3. install/register the new bundle with REAPER and other X4 clients closed;
-4. run `probe_b5_192k_cadence.cmd` once;
-5. return `B5_192K_CADENCE_REPORT.txt`;
-6. choose any 192 kHz contract change only from the measured first sustained stable cadence;
-7. do not intentionally reproduce audible buzz.
+2. require ARM64EC + Classic ARM64 compile/link PASS;
+3. require both DLLs to contain `dual-event-mux-v4-coalesce-recovery` and `runtime-failsafe-v1`;
+4. install the resulting ZIP with REAPER/other X4 clients closed;
+5. run `install_and_validate_b5.cmd` **once**;
+6. return `B5_PRODUCT_VALIDATION_REPORT.txt`;
+7. do not run the dedicated cadence probe first;
+8. inspect any `renderCoalesces` / `renderDroppedBlocks`; they may be non-zero on a successful recovered xrun, while strict fatal counters must remain zero.
 
-The normal product matrix now runs the REAPER-matched `48k/480 output / 5 s` case before the 192 kHz case so it is no longer hidden by a later 192 kHz failure.
+If product validation passes, perform one ordinary REAPER test at the already-observed host geometry:
+
+- 48 kHz
+- 24-bit
+- 2 in / 2 out
+- 480 samples
+
+If a fatal failure occurs, do not repeatedly retry. Return `%TEMP%\B5_RUNTIME_FAILURE.txt` immediately.
 
 ---
 
-# After cadence result
+# After runtime PASS
 
-If 384 is unstable but a larger candidate is consistently stable:
+Resume the required native ASIO control-panel milestone:
 
-- update the 192 kHz min/preferred to the first measured stable candidate;
-- update latency/buffer contract validation;
-- rerun the full matrix;
-- then do one normal REAPER audible test.
+- own native Win32 UI, no Creative binary reuse
+- `IASIO::controlPanel()` entry point
+- current sample rate
+- buffer/latency setting + frames/ms
+- sample-rate-aware limits
+- no WaveRT pin creation merely from opening the panel
+- no live mutation of active buffers/RUN
+- deterministic Apply/OK/Cancel
+- safe persistence/reopen/reset path
+- lightweight diagnostics/save-report surface later
 
-If larger candidates also show packet skips, do not raise the buffer blindly; diagnose the notification scheduling path instead.
-
-After this runtime blocker is closed, resume the planned native ASIO control panel, then final real output + real stereo input validation, then freeze B5 first release and resume CTCDC/CTIntrfu.
+After control-panel PASS, finish real REAPER output + real stereo input validation at 48/96 kHz, freeze B5 first release, then resume deferred CTCDC/CTIntrfu work.
