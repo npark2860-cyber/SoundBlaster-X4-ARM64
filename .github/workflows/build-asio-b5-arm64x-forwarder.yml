@@ -1,0 +1,133 @@
+name: Build B5 ARM64X ASIO Forwarder Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: B5 ARM64X dual-architecture package
+    runs-on: windows-2022
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout requested branch
+        uses: actions/checkout@v4
+
+      - name: Configure and build ARM64EC B5 backend
+        shell: pwsh
+        run: |
+          cmake -S src/asio-arm64-stage-b0 -B build/asio-b5-arm64ec -G "Visual Studio 17 2022" -A ARM64EC
+          cmake --build build/asio-b5-arm64ec --config Release --target x4-asio-arm64ec-b5 --parallel
+
+      - name: Configure and build Classic ARM64 B5 backend
+        shell: pwsh
+        run: |
+          cmake -S src/asio-arm64-stage-b5-classic -B build/asio-b5-arm64 -G "Visual Studio 17 2022" -A ARM64
+          cmake --build build/asio-b5-arm64 --config Release --target x4-asio-arm64-b5 --parallel
+
+      - name: Build ARM64X registration helper and ARM64EC route probe
+        shell: pwsh
+        run: |
+          cmake -S src/asio-arm64-stage-b5-arm64x -B build/asio-b5-arm64x-arm64ec -G "Visual Studio 17 2022" -A ARM64EC
+          cmake --build build/asio-b5-arm64x-arm64ec --config Release --target x4-asio-stage-b5-arm64x-register x4-asio-stage-b5-arm64x-probe-arm64ec --parallel
+
+      - name: Build native ARM64 route probe
+        shell: pwsh
+        run: |
+          cmake -S src/asio-arm64-stage-b5-arm64x -B build/asio-b5-arm64x-arm64 -G "Visual Studio 17 2022" -A ARM64
+          cmake --build build/asio-b5-arm64x-arm64 --config Release --target x4-asio-stage-b5-arm64x-probe-arm64 --parallel
+
+      - name: Build Microsoft-style ARM64X pure forwarder
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe not found"
+          }
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.ARM64 -property installationPath
+          if (-not $vs) {
+            throw "Visual Studio ARM64 C++ tools not found"
+          }
+          $devcmd = Join-Path $vs "Common7\Tools\VsDevCmd.bat"
+          $builder = Join-Path $PWD "src\asio-arm64-stage-b5-arm64x\build_forwarder.cmd"
+          $out = Join-Path $PWD "dist"
+          $cmdline = "`"$devcmd`" -no_logo -arch=arm64 -host_arch=amd64 && call `"$builder`" `"$out`""
+          cmd.exe /d /s /c $cmdline
+          if ($LASTEXITCODE -ne 0) {
+            throw "ARM64X pure-forwarder build failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Stage exact backend binaries and tools
+        shell: pwsh
+        run: |
+          $ecSource = Join-Path $PWD "build/asio-b5-arm64ec/Release/x4-asio-arm64ec-b5.dll"
+          $armSource = Join-Path $PWD "build/asio-b5-arm64/Release/x4-asio-arm64-b5.dll"
+          $ecDest = Join-Path $PWD "dist/x4_asio_backend_arm64ec_b5.dll"
+          $armDest = Join-Path $PWD "dist/x4_asio_backend_arm64_b5.dll"
+
+          Copy-Item $ecSource $ecDest
+          Copy-Item $armSource $armDest
+          Copy-Item build/asio-b5-arm64x-arm64ec/Release/x4-asio-stage-b5-arm64x-register.exe dist/
+          Copy-Item build/asio-b5-arm64x-arm64ec/Release/x4-asio-stage-b5-arm64x-probe-arm64ec.exe dist/
+          Copy-Item build/asio-b5-arm64x-arm64/Release/x4-asio-stage-b5-arm64x-probe-arm64.exe dist/
+          Copy-Item src/asio-arm64-stage-b5-arm64x/install_arm64x_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b5-arm64x/uninstall_arm64x_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b5-arm64x/verify_arm64x_b5.cmd dist/
+          Copy-Item src/asio-arm64-stage-b5-arm64x/README.md dist/README_ARM64X.md
+
+          if ((Get-FileHash $ecSource -Algorithm SHA256).Hash -ne (Get-FileHash $ecDest -Algorithm SHA256).Hash) {
+            throw "ARM64EC backend copy changed bytes"
+          }
+          if ((Get-FileHash $armSource -Algorithm SHA256).Hash -ne (Get-FileHash $armDest -Algorithm SHA256).Hash) {
+            throw "ARM64 backend copy changed bytes"
+          }
+
+          $required = @(
+            "dist/x4-asio-arm64x-b5.dll",
+            "dist/x4_asio_backend_arm64ec_b5.dll",
+            "dist/x4_asio_backend_arm64_b5.dll",
+            "dist/x4-asio-stage-b5-arm64x-register.exe",
+            "dist/x4-asio-stage-b5-arm64x-probe-arm64ec.exe",
+            "dist/x4-asio-stage-b5-arm64x-probe-arm64.exe",
+            "dist/install_arm64x_b5.cmd",
+            "dist/uninstall_arm64x_b5.cmd",
+            "dist/verify_arm64x_b5.cmd"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) { throw "Missing package file: $file" }
+          }
+
+          "ARM64EC backend SHA256: $((Get-FileHash $ecDest -Algorithm SHA256).Hash)"
+          "ARM64 backend SHA256:   $((Get-FileHash $armDest -Algorithm SHA256).Hash)"
+          "ARM64X forwarder SHA256: $((Get-FileHash dist/x4-asio-arm64x-b5.dll -Algorithm SHA256).Hash)"
+
+      - name: Static ARM64X export safety check
+        shell: pwsh
+        run: |
+          $exports = Get-Content dist/ARM64X_EXPORTS.txt -Raw
+          $headers = Get-Content dist/ARM64X_HEADERS.txt -Raw
+          if ($headers -notmatch "ARM64X") { throw "ARM64X header marker missing" }
+          if ($exports -notmatch "DllGetClassObject") { throw "DllGetClassObject export missing" }
+          if ($exports -notmatch "DllCanUnloadNow") { throw "DllCanUnloadNow export missing" }
+          if ($exports -match "DllRegisterServer") { throw "Forwarder must not export DllRegisterServer" }
+          if ($exports -match "DllUnregisterServer") { throw "Forwarder must not export DllUnregisterServer" }
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          $zip = Join-Path $PWD "SoundBlaster-X4-ASIO-B5-ARM64X.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path dist/* -DestinationPath $zip -Force
+          "ZIP SHA256: $((Get-FileHash $zip -Algorithm SHA256).Hash)"
+
+      - name: Upload ARM64X package
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-ASIO-B5-ARM64X
+          path: SoundBlaster-X4-ASIO-B5-ARM64X.zip
+          if-no-files-found: error
+          retention-days: 14
