@@ -1,0 +1,66 @@
+name: Build X4 Legacy CTCDC Session Probe ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 Legacy CTCDC Session Probe
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout exact previously validated probe branch
+        uses: actions/checkout@v4
+        with:
+          ref: poc/windows-arm64-usb-serial-ctcdc-init
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/serial-poc -B build/serial-poc -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build exact legacy session probe
+        shell: pwsh
+        run: |
+          cmake --build build/serial-poc --config Release --target x4-serial-ctcdc-probe --parallel
+
+      - name: Verify ARM64 PE and package
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/serial-poc/Release/x4-serial-ctcdc-probe.exe"
+          if (-not (Test-Path $exe)) {
+            throw "x4-serial-ctcdc-probe.exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $exe dist/x4-serial-ctcdc-probe.exe
+          Set-Content -Path dist/LEGACY_SOURCE.txt -Encoding ASCII -Value @(
+            "Exact source branch: poc/windows-arm64-usb-serial-ctcdc-init",
+            "Exact source path: src/serial-poc/session-open-probe.cpp",
+            "Expected source blob SHA: afc88fb1eff3aea814af77b2c6548749bf0aa386",
+            "This build is for environment-vs-code discrimination only."
+          )
+          Compress-Archive -Path dist/x4-serial-ctcdc-probe.exe,dist/LEGACY_SOURCE.txt -DestinationPath dist/SoundBlaster-X4-Legacy-CTCDC-Session-Probe-ARM64.zip -Force
+
+          "ARM64 PE verified: 0xAA64"
+          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+          "ZIP SHA256: $((Get-FileHash dist/SoundBlaster-X4-Legacy-CTCDC-Session-Probe-ARM64.zip -Algorithm SHA256).Hash)"
+
+      - name: Upload legacy probe ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-Legacy-CTCDC-Session-Probe-ARM64
+          path: dist/SoundBlaster-X4-Legacy-CTCDC-Session-Probe-ARM64.zip
+          if-no-files-found: error
+          retention-days: 14
