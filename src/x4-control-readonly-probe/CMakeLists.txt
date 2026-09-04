@@ -17,3 +17,4 @@ endfunction()
 
 configure_probe(x4-control-readonly-probe main.cpp)
 configure_probe(x4-ctcdc-challenge-capture challenge-capture.cpp)
+configure_probe(x4-mixer-readonly-drilldown mixer-drilldown.cpp)
