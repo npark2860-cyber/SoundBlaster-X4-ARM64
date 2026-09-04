@@ -21,103 +21,112 @@ Immutable safety:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@1e4b9527269a84115f4aa43a09fdf3c9a7c31dd3`
+`exp/windows-arm64-asio-b5-capability-productization@ca37f0e8427227733cd6082a50e20101312e3333`
 
-Runtime/build markers:
+Required runtime/build markers:
 
 - `dual-event-mux-v4-coalesce-recovery`
 - `runtime-failsafe-v1`
+- `packet-stats-observed-v1`
 
 ---
 
-# Latest measured blocker — not 192 kHz specific
+# Latest returned reports — v4 software regression identified
 
-The latest product report was generated `2026-09-04 15:26:42.62`.
+The first mux-v4 bundle loaded the intended v4/fail-safe markers and passed registration, registry, immutable property-only idle gate, and KS capability probing.
 
-Registration / registry / property-only idle gate / KS capability probing passed.
+The very first 48 kHz / 240-frame output lifecycle then failed after exactly one callback:
 
-48 kHz / 240 output-only:
+- callbacks=1
+- worker=1
+- rPkt=0
+- rPos=0
+- idx=0
+- outCopy=0
+- inCopy=0
 
-- cycle1 PASS, callbacks=139
-- cycle2 PASS, callbacks=142
-- cycle3 failed after callbacks=74
+The v4 192 kHz cadence run also failed 384/432/480/576 after exactly one callback each with the same zero-fatal-counter pattern.
 
-Exact failure:
+The preserved v4 runtime record at 192 kHz / 576 frames was decisive:
 
-`B5 RENDER PACKET DISCONTINUITY previous=74 expected=75 current=76 delta=2`
-
-The preserved runtime file recorded:
-
-- rate=48000
-- frames=240
-- render notifications=75
-- callbacks=74
-- lastPacket=76
-- packetDiscontinuities=1
+- render notifications=2
+- callbacks=1
+- notificationCoalesces=0
+- recoveredCoalesces=0
+- droppedBlocks=0
+- packetDiscontinuities=0
 - positionRegressions=0
-- index/copy errors=0
-- `emergencySilence=OK`
+- writes=1
+- lastPacket=2
+- emergencySilence=OK
 
-This is the same forward `+2` pattern previously seen at 192 kHz (`332 -> 334`). Because it now occurs at 48 kHz / 240 frames = 5.0 ms, the earlier 192 kHz minimum-period hypothesis is superseded.
-
-The shared issue is the auto-reset WaveRT notification primitive: event state is not a counting semaphore, so a hardware packet can advance without a distinct user-mode wake for every period.
+Therefore this was not a new hardware cadence failure. `process_signaled_notification()` accepted the second notification with no packet or position error, but mux-v4 rejected it afterward.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_48K_RENDER_COALESCE_RECOVERY_V4.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V4_STATS_ALIAS_REGRESSION.md`
 
 ---
 
-# Implemented fix — mux v4 coalesce recovery
+# Root cause
 
-Exactly one measured forward Render transition `delta == 2` is now classified as a recoverable one-block xrun / notification coalesce.
+Mux-v4 used `before.stats().last_packet` as the previous observed hardware PACKETCOUNT.
 
-For example `74 -> 76`:
+But `write_render_packet24()` also updated internal `stats_.last_packet` to the future write-ahead target packet.
 
-1. invoke a synthetic ASIO callback for missed master packet 75;
-2. preserve the alternating ASIO buffer index and callback/sample timeline;
-3. deliberately discard that synthetic callback's output because hardware packet 76 has already completed;
-4. invoke the normal current master packet 76 callback;
-5. write only its output to future WaveRT packet 77;
-6. continue streaming instead of killing the worker.
+Normal sequence therefore became:
 
-Duplex behavior:
+1. PACKETCOUNT 1 observed;
+2. callback writes future packet 2;
+3. stats last_packet becomes 2;
+4. next PACKETCOUNT correctly returns 2;
+5. mux-v4 computes `2 - 2 = 0` and falsely fails.
 
-- synthetic missed callback gets zero-filled input;
-- it does not consume capture staging;
-- the current callback resumes normal staged capture consumption.
-
-New diagnostics:
-
-- engine `notification_coalesces`
-- worker `renderCoalesces`
-- worker `renderDroppedBlocks`
-- fatal record includes coalescing history
-
-This is not a general tolerance increase.
-
-Still fatal:
-
-- render duplicate/backward transition
-- render forward `delta > 2`
-- capture packet discontinuity
-- render position regression
-- callback-index error outside explicit catch-up
-- render/capture copy failure
-- capture staging failure / sustained starvation
-- worker failure
-
-`runtime-failsafe-v1` remains the fatal fallback and still performs no worker-side pin teardown.
-
-No `kAsioResyncRequest` is sent in this first recovery implementation; avoid adding host-reset side effects until runtime shows they are needed.
+The engine's private `previous_packet_` still tracked `1 -> 2` correctly, which is why `packetDiscontinuities=0`.
 
 ---
 
-# 192 kHz cadence probe
+# Implemented correction
 
-`probe_b5_192k_cadence.cmd` remains packaged for diagnosis but is **not the immediate next test**.
+`X4WaveRtEngineB5::stats()` now returns a snapshot whose externally visible `last_packet` is the last hardware packet actually observed from PACKETCOUNT/GETREADPACKET whenever one exists.
 
-Do not raise the 192 kHz min/preferred buffer merely to hide notification coalescing now proven at 48 kHz too.
+The future render write target remains separate from that observable packet timeline.
+
+Commits:
+
+- `4acfadfc4131172d65e1877480b242c85c1416ce` — fix observed packet stats semantics
+- `ca37f0e8427227733cd6082a50e20101312e3333` — embed `packet-stats-observed-v1`
+
+The main workflow now refuses packaging unless both ARM64EC and Classic ARM64 DLLs contain all three required runtime markers.
+
+The measured mux-v4 recovery policy itself is unchanged:
+
+- render forward `delta == 2` -> recover exactly one collapsed notification as one explicit xrun block
+- render duplicate/backward or `delta > 2` -> fatal
+- capture packet discontinuity -> fatal
+- render position regression -> fatal
+- callback-index/copy/staging/join failure -> fatal
+
+---
+
+# Historical cadence evidence retained
+
+The older mux-v3 cadence report remains useful background:
+
+- 192k/384: one 5 s cycle PASS
+- 192k/432: later `+2` skip
+- 192k/480: later `+4` skip
+- 192k/576: one cycle PASS, another later `+2` skip
+
+This confirms that simply increasing the 192 kHz buffer does not eliminate notification coalescing. Do not raise the public 192 kHz buffer contract merely to hide this issue.
+
+The repeated allocation-only geometry probe is unchanged:
+
+- 48..336 frames rejected
+- 384 first accepted
+- 432..960 accepted
+
+Current public 192 kHz contract therefore remains min/preferred 384 pending normal runtime closure.
 
 ---
 
@@ -125,21 +134,21 @@ Do not raise the 192 kHz min/preferred buffer merely to hide notification coales
 
 1. run manual workflow `Build ASIO B5 Productization`;
 2. require ARM64EC + Classic ARM64 compile/link PASS;
-3. require both DLLs to contain `dual-event-mux-v4-coalesce-recovery` and `runtime-failsafe-v1`;
-4. install the resulting ZIP with REAPER/other X4 clients closed;
+3. require both DLLs to contain all three markers listed above;
+4. install the resulting ZIP with REAPER and other X4 clients closed;
 5. run `install_and_validate_b5.cmd` **once**;
 6. return `B5_PRODUCT_VALIDATION_REPORT.txt`;
-7. do not run the dedicated cadence probe first;
-8. inspect any `renderCoalesces` / `renderDroppedBlocks`; they may be non-zero on a successful recovered xrun, while strict fatal counters must remain zero.
+7. do not run the old/broken v4 cadence bundle again;
+8. successful recovery may show non-zero `renderCoalesces` / `renderDroppedBlocks`, but fatal counters must remain zero.
 
-If product validation passes, perform one ordinary REAPER test at the already-observed host geometry:
+If the full product matrix passes, perform one ordinary REAPER test at the observed host geometry:
 
 - 48 kHz
 - 24-bit
 - 2 in / 2 out
 - 480 samples
 
-If a fatal failure occurs, do not repeatedly retry. Return `%TEMP%\B5_RUNTIME_FAILURE.txt` immediately.
+If a fatal failure occurs, stop retries and return the new `%TEMP%\B5_RUNTIME_FAILURE.txt`.
 
 ---
 
@@ -149,13 +158,13 @@ Resume the required native ASIO control-panel milestone:
 
 - own native Win32 UI, no Creative binary reuse
 - `IASIO::controlPanel()` entry point
-- current sample rate
+- current/effective sample rate and buffer
 - buffer/latency setting + frames/ms
 - sample-rate-aware limits
 - no WaveRT pin creation merely from opening the panel
 - no live mutation of active buffers/RUN
 - deterministic Apply/OK/Cancel
 - safe persistence/reopen/reset path
-- lightweight diagnostics/save-report surface later
+- lightweight diagnostics/save-report surface
 
 After control-panel PASS, finish real REAPER output + real stereo input validation at 48/96 kHz, freeze B5 first release, then resume deferred CTCDC/CTIntrfu work.
