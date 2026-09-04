@@ -16,7 +16,7 @@ jobs:
       - name: Checkout capability-probe source
         uses: actions/checkout@v4
         with:
-          ref: exp/windows-arm64-x4-readonly-capability-map
+          ref: exp/windows-arm64-x4-native-controller
 
       - name: Configure ARM64
         shell: pwsh
