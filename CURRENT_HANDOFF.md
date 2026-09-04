@@ -25,35 +25,19 @@ At the start of a later chat, verify actual GitHub heads again. Do not reconstru
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_REAPER_BUZZ_RUNTIME_FAILSAFE_V1.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_FULL_MATRIX_PASS_192K_384.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
-6. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
-7. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
-8. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
-9. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
-10. `NEXT_ACTION_ASIO.md`
-11. older B5/B4D histories only as needed
+2. `DEBUG_HISTORY_20260904_ASIO_B5_FAILSAFE_RUNTIME_192K_RENDER_PACKET_DISCONTINUITY.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_REAPER_BUZZ_RUNTIME_FAILSAFE_V1.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_FULL_MATRIX_PASS_192K_384.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
+7. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
+8. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
+9. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
+10. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
+11. `NEXT_ACTION_ASIO.md`
+12. older B5/B4D histories only as needed
 
 CTCDC remains deferred until the B5 first-release ASIO product surface and host-level pass are closed.
-
----
-
-# Proven fallback
-
-B4D remains hardware/user proven in REAPER ARM64EC:
-
-- 48 kHz
-- stereo output
-- signed 16-bit PCM
-- 512 ASIO frames
-- Render Pin 1
-- local + global BUSY gates
-- joined worker stop
-- ASIO 2.x time-info
-
-Do not modify validated B4D unless a concrete B5 regression requires it.
 
 ---
 
@@ -74,11 +58,13 @@ Historical collision class must never be intentionally reproduced:
 - Parameter 1 = 5
 - stale/destroyed `WDFUSBPIPE` recovery path
 
-New runtime fail-safe v1 must also obey the joined-worker rule. It may overwrite render cyclic contents with silence on worker failure, but it must never perform worker-side pin teardown.
+`runtime-failsafe-v1` may overwrite render cyclic contents with silence on worker failure but must never perform worker-side pin teardown.
+
+Validated B4D remains frozen and must not be changed without a concrete B5 regression requiring it.
 
 ---
 
-# B5 first-release contract — current
+# B5 first-release public contract
 
 Channels/sample type:
 
@@ -110,7 +96,7 @@ Other:
 - ASIO 2.x time-info
 - Render Pin 1 + Capture Pin 4 WaveRT
 
-The 192 kHz contract intentionally differs from Creative's public 240-frame preferred value because the Windows X4 `msft_wave` path was directly measured to reject notification periods below 2.0 ms at 192 kHz.
+192 kHz min/preferred 384 is based on the directly measured Windows X4 `msft_wave` 2.0 ms minimum notification geometry.
 
 ---
 
@@ -121,247 +107,173 @@ Current markers:
 - `dual-event-mux-v3`
 - `runtime-failsafe-v1`
 
-The main workflow refuses to package unless both ARM64EC and Classic ARM64 B5 DLLs contain both markers.
+The manual productization workflow refuses to package unless both ARM64EC and Classic ARM64 B5 DLLs contain both markers.
 
 ---
 
-# Latest completed silent runtime — full matrix PASS
+# Prior full silent matrix — historical PASS
 
-Returned report generated `2026-09-04 13:21:47.16`.
-
-Final result:
+Report generated `2026-09-04 13:21:47.16`:
 
 `B5 PRODUCT VALIDATION RESULT: PASS code=0`
 
 `B5 INSTALL + PRODUCT VALIDATION: PASS`
 
-Registration/capability:
+It passed:
 
-- B5 registration PASS
-- registry verification PASS
-- property-only Render Pin 1 idle gate `C 0/1 G 0/1 busy=NO`
-- KS capability probe PASS
-- ASIO capability probe PASS
+- 48k/240 output x3
+- 48k/240 duplex x2
+- 96k/240 duplex x2
+- 192k/384 output x2
+- 48k/96 output x1
+- 48k/4800 output x1
+- 48k/512 compatibility x1
 
-Lifecycle matrix:
+This proved the public 192k/384 contract and lifecycle once, but later evidence below supersedes any conclusion that the render runtime is fully stable.
 
-## 48 kHz / 240 output-only x3
-
-PASS all cycles.
-
-Callbacks:
-
-- 140
-- 141
-- 139
-
-All stop with `stop=0`, `workerJoined=YES`.
-
-## 48 kHz / 240 full duplex x2
-
-PASS both cycles.
-
-- cycle1: callbacks 141, renderNotif 141, captureNotif 140, capturePhaseMisses 1
-- cycle2: callbacks 141, renderNotif 141, captureNotif 142, capturePhaseMisses 0
-
-No strict packet/index/copy failure.
-
-## 96 kHz / 240 full duplex x2
-
-PASS both cycles.
-
-- cycle1: callbacks 282, renderNotif 282, captureNotif 255, capturePhaseMisses 27, captureConsumed 255
-- cycle2: callbacks 280, renderNotif 280, captureNotif 254, capturePhaseMisses 26, captureConsumed 254
-
-No strict packet/index/copy failure.
-
-The 96 kHz capture cadence still trails render by roughly 26..27 callback periods over the short validation window. Treat this as a remaining latency/cadence quality observation, not as a product lifecycle blocker. Do not weaken strict checks to hide it.
-
-## 192 kHz / 384 output-only x2
-
-PASS both cycles.
-
-Public contract verified each cycle:
-
-`min=384 max=4800 preferred=384 granularity=48`
-
-WaveRT geometry:
-
-- 384 frames/notification
-- 2304 bytes/packet
-- 4608-byte cyclic buffer
-- 2.0 ms period
-
-Cycle1:
-
-- callbacks 350
-- renderNotif 350
-- latencyOut 384
-- stop=0
-- outFrames 134400
-
-Cycle2:
-
-- callbacks 348
-- renderNotif 348
-- latencyOut 384
-- stop=0
-- outFrames 133632
-
-This closed the prior `BUFFER_WITH_NOTIFICATION Win32=87 requested=2880` blocker for the first-release architecture.
-
-## Boundary / compatibility
-
-48 kHz / 96 output:
-
-- PASS
-- callbacks 250
-
-48 kHz / 4800 output:
-
-- PASS
-- callbacks 9
-
-48 kHz / 512 compatibility output:
-
-- PASS
-- callbacks 65
+96k/240 duplex still showed roughly 26..27 capture phase misses without a strict packet/index/copy failure.
 
 ---
 
-# New real REAPER regression — sustained buzz/drone
+# Real REAPER regression — sustained buzz/drone
 
-After the full silent matrix passed, actual REAPER playback exposed a new host-level failure.
-
-Observed REAPER device state:
+REAPER ARM64EC later showed B5 active at:
 
 - 48 kHz
 - 24-bit
-- 2 inputs / 2 outputs
+- 2 in / 2 out
 - 480 samples
-- approximately 10 ms input + 10 ms output
+- about 10 ms input + 10 ms output
 
-480 frames / 48 kHz = exactly 10 ms and is a valid B5 buffer size.
+During actual playback, output became a very loud sustained drone/buzz. REAPER left no useful diagnostic log.
 
-During audible playback, output later became a very loud sustained `drone/buzz` tone. REAPER itself left no useful log.
+480 frames at 48 kHz is valid. Do not assume the buffer value itself is invalid.
 
-Do not infer that 480 frames is invalid.
-
-The previous mux-v3 fatal path set `worker_failed_` and returned from the worker but did not overwrite the WaveRT render cyclic contents. A plausible mechanism is therefore:
-
-`worker fatal exit -> render pin remains RUN -> last cyclic audio contents repeat`
-
-This matches the host symptom, but it is still a hypothesis. The exact fatal reason is not known until a new runtime record captures it.
+This motivated `runtime-failsafe-v1`.
 
 ---
 
-# Runtime fail-safe v1 — implemented
+# Runtime fail-safe v1
 
-B5 source now adds a failure-only safety/diagnostic path in:
+On a fatal worker path B5 now:
 
-`src/asio-arm64-stage-b0/driver_b5_mux_adapter.inl`
+1. snapshots pre-failure render/capture stats and engine messages;
+2. sets `worker_failed_`;
+3. overwrites both WaveRT render notification slots with silence via the existing render copy API;
+4. performs no KSSTATE/pin close/dispose inside the worker;
+5. only after silence, writes a one-shot diagnostic record to `OutputDebugString` and `%TEMP%\B5_RUNTIME_FAILURE.txt`.
 
-On fatal worker failure:
-
-1. snapshot pre-failure render/capture stats and engine messages;
-2. snapshot callback/index/copy counters and capture phase counters;
-3. set `worker_failed_`;
-4. overwrite both WaveRT render notification slots with silence through the existing `write_render_packet24()` API;
-5. do not perform KSSTATE transition, pin close, dispose, or hardware teardown inside the worker;
-6. then emit the diagnostic record to `OutputDebugString` and:
-
-`%TEMP%\B5_RUNTIME_FAILURE.txt`
-
-The failure record includes:
-
-- direction/reason
-- captured Win32 value
-- emergency-silence result
-- rate / frames
-- selected/running state
-- callback and last-index state
-- callback-index/render-copy/capture-copy error counters
-- render/capture notification, packet, position, frame and nonzero counters
-- captureNotReady / captureMoreData / capturePhaseMisses / captureConsumed
-- render/capture engine messages
-
-The diagnostic stats are captured before the two emergency zero writes so the safety action does not contaminate the record.
-
-File/debug logging occurs only after the emergency silence attempt.
+The file logger is failure-only and does not run in the normal realtime callback path.
 
 ---
 
-# REAPER-matched silent validator added
+# Latest runtime — NEW 192 kHz render packet discontinuity
 
-The current B5 validator additionally includes:
+Report generated `2026-09-04 13:50:09.41` with the fail-safe build.
 
-`reaper-48-480-output`
+PASS before failure:
 
-- 48 kHz
-- 480 frames
-- output-only
-- 5 seconds
+- registration / registry verification
+- KS property-only idle gate
+- KS capability probe
+- 48k/240 output x3
+- 48k/240 duplex x2
+- 96k/240 duplex x2
+- 192k/384 output cycle 1
 
-This matches the actual REAPER host geometry observed before the buzz failure.
+96k remained similar:
 
-It cannot prove audible-content stability, but it must pass before the next REAPER playback test.
+- cycle1 render 281 / capture 255 / phase misses 27
+- cycle2 render 278 / capture 252 / phase misses 27
 
----
+No strict 96k packet/index/copy failure was reported.
 
-# 192 kHz geometry diagnosis — closed
+## Failing cycle
 
-Dedicated geometry report generated `2026-09-04 13:05:25.43` established:
+`preferred-192-output` cycle 2:
 
-- 48..336 frames per notification: FAIL Win32=87
-- 384 frames / 2.0 ms: first PASS
-- 432..960 tested candidates: PASS
-- accepted candidates returned `ActualBufferSize == RequestedBufferSize`
+- rate = 192000
+- frames = 384
+- callbacks = 332
+- `worker=1`
+- render packet discontinuities `rPkt=1`
+- render position regressions `rPos=0`
+- callback index errors `idx=0`
+- render copy errors `outCopy=0`
+- capture copy errors `inCopy=0`
+- `stop=-999`
 
-The failure was not generic byte alignment. It was a sample-rate-dependent minimum WaveRT notification duration on this X4 Windows path.
+Worker output:
 
-The chosen first-release fix is a rate-specific 384-frame minimum/preferred at 192 kHz, preserving the already-proven 1:1 host-buffer-to-WaveRT-packet architecture.
+`B5 worker RENDER failed: B5 RENDER RUN entered emergencySilence=OK log=%TEMP%\B5_RUNTIME_FAILURE.txt`
+
+Final result:
+
+`B5 PRODUCT VALIDATION RESULT: FAIL code=28`
+
+`B5 INSTALL + PRODUCT VALIDATION: FAIL`
+
+The new 48k/480 five-second REAPER-matched validator case was not reached because validation stops at the first failing case.
+
+## Interpretation
+
+The failure logger did not cause this. It only runs after the strict mux failure has already been detected.
+
+The render signaled path reads WaveRT `PACKETCOUNT` and increments `packet_discontinuities` whenever the observed packet is not exactly `previous_packet + 1`. Mux-v3 treats any increment as fatal.
+
+Therefore the latest report proves a non-sequential render PACKETCOUNT observation at 192k/384.
+
+At 384 frames / 192 kHz the notification period is 2.0 ms. Event coalescing or scheduling delay is a plausible explanation, but is not yet proven because the current record does not preserve the exact `previous -> current` packet transition.
+
+Do not weaken the strict continuity check yet.
+
+## Fail-safe validation
+
+`emergencySilence=OK`
+
+This is direct proof that runtime-failsafe-v1 executed on a real worker fatal path and successfully zeroed the render cyclic slots before logging.
 
 ---
 
 # ASIO control panel — still required, temporarily preempted
 
-The B5 driver still implements:
+The B5 driver still has:
 
 `ASIOError controlPanel() override { return ASE_NotPresent; }`
 
-The planned first-release control panel remains:
+The planned control panel remains required:
 
-- our own native Win32 UI;
-- no reuse of Creative's control-panel binary;
-- compact credible latency/buffer UI inspired only by the role/look of the official panel;
-- sample-rate-aware buffer settings;
-- frames + milliseconds display;
-- no WaveRT pin creation merely from opening the panel;
-- no live mutation of active ASIO buffers/RUN;
-- deterministic Apply/OK/Cancel and safe host reset/reopen behavior.
+- native Win32 UI
+- no Creative binary reuse
+- compact credible latency/buffer panel
+- sample-rate-aware settings
+- frames + ms display
+- no pin creation merely from opening the panel
+- no live mutation of active buffers/RUN
+- deterministic Apply/OK/Cancel and safe reopen/reset behavior
+- diagnostic section later for lightweight counters and save-report support
 
-However the concrete real-playback sustained-buzz regression now takes priority over UI implementation.
-
-Do not resume control-panel work until the runtime-failsafe build passes its new validation and one normal REAPER playback check has been completed, or until a recurring failure log has been analyzed and fixed.
-
----
-
-# B4D protection
-
-Validated B4D core remains frozen. Do not alter or bypass it.
+But the newly proven render runtime failure takes priority.
 
 ---
 
 # Immediate next action
 
-1. run manual workflow `Build ASIO B5 Productization`;
-2. require ARM64EC + Classic ARM64 compile/link PASS;
-3. require PE/ARM64X checks PASS;
-4. require both `dual-event-mux-v3` and `runtime-failsafe-v1` in both DLLs;
-5. install the new ZIP and run `install_and_validate_b5.cmd` once;
-6. confirm the new 48k/480 5-second `reaper-48-480-output` case passes;
-7. then do one normal REAPER 48k/480 audible playback test;
-8. do not intentionally provoke or repeatedly reproduce the loud buzz;
-9. if it occurs again, stop testing and return `%TEMP%\B5_RUNTIME_FAILURE.txt` immediately.
+Do **not** rerun the validation yet.
 
-Once this runtime safety regression is closed, resume the native ASIO control-panel milestone, then final real output + real stereo input validation, then freeze B5 first release and resume deferred CTCDC/CTIntrfu native static analysis.
+Retrieve and return the already-created file from the same Windows session:
+
+`%TEMP%\B5_RUNTIME_FAILURE.txt`
+
+Preserve it before another failure overwrites it.
+
+After reading that file:
+
+1. determine whether it contains enough evidence to identify the packet transition;
+2. if not, add exact render discontinuity diagnostics: previous packet, current packet, delta, presentation position and QPC;
+3. keep strict packet/copy/index/position protections enabled;
+4. implement only the measured render-notification/coalescing fix;
+5. rerun the full matrix including the 48k/480 five-second case;
+6. only after runtime stability returns, resume the native ASIO control-panel milestone;
+7. then perform final real output + real stereo input validation and freeze B5 first release;
+8. CTCDC/CTIntrfu remains deferred until then.
