@@ -25,16 +25,17 @@ At the start of a later chat, verify actual GitHub heads again. Do not reconstru
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
-6. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
-7. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
-8. `NEXT_ACTION_ASIO.md`
-9. older B5/B4D histories only as needed
+2. `DEBUG_HISTORY_20260904_ASIO_B5_FULL_MATRIX_PASS_192K_384.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_RUNTIME_96K_PHASE_DECOUPLE_V3.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
+7. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
+8. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
+9. `NEXT_ACTION_ASIO.md`
+10. older B5/B4D histories only as needed
 
-CTCDC remains deferred until the B5 first-release ASIO pass is closed.
+CTCDC remains deferred until the B5 first-release ASIO host-level pass is closed.
 
 ---
 
@@ -120,102 +121,152 @@ The main workflow refuses to package unless both ARM64EC and Classic ARM64 DLLs 
 
 ---
 
-# Latest product runtime before 192 kHz contract fix
+# Latest product runtime — full matrix PASS
 
-Returned product report generated `2026-09-04 13:00:02.92`.
+Returned report generated `2026-09-04 13:21:47.16`.
 
-PASS:
+Final result:
 
-- B5 registration
-- property-only Render Pin 1 idle gate
-- KS capability probe
-- 48k/240 output x3
-- 48k/240 full duplex x2
-- 96k/240 full duplex x2
+`B5 PRODUCT VALIDATION RESULT: PASS code=0`
 
-The 192k/240 case still failed before worker creation:
+`B5 INSTALL + PRODUCT VALIDATION: PASS`
 
-`B5 RENDER BUFFER_WITH_NOTIFICATION FAILED Win32=87 requested=2880`
+Registration/capability:
 
-Mux-v3 remained loaded and active for the preceding cases.
+- B5 registration PASS
+- registry verification PASS
+- property-only Render Pin 1 idle gate `C 0/1 G 0/1 busy=NO`
+- KS capability probe PASS
+- ASIO capability probe PASS
 
-## 96 kHz observation
+Lifecycle matrix:
 
-96k/240 full duplex now lifecycle-passes without strict packet/index/copy errors.
+## 48 kHz / 240 output-only x3
 
-Capture still trails render. Recent runs showed roughly 23..27 `capturePhaseMisses` per ~278 callbacks. This remains a separate cadence/latency-quality observation and is not the current 192 kHz blocker.
+PASS all cycles.
 
-Do not weaken strict failure checks merely to hide it.
+Callbacks:
 
----
+- 140
+- 141
+- 139
 
-# 192 kHz WaveRT geometry — measured and closed diagnostically
+All stop with `stop=0`, `workerJoined=YES`.
 
-Dedicated geometry report generated `2026-09-04 13:05:25.43`.
+## 48 kHz / 240 full duplex x2
 
-Probe conditions:
+PASS both cycles.
 
-- X4 `msft_wave`
-- Render Pin 1
-- 192 kHz
-- stereo
-- 24-bit PCM
-- `NotificationCount=2`
-- property/buffer allocation only
-- never entered KSSTATE_RUN
-- local/global FREE required before every `KsCreatePin`
+- cycle1: callbacks 141, renderNotif 141, captureNotif 140, capturePhaseMisses 1
+- cycle2: callbacks 141, renderNotif 141, captureNotif 142, capturePhaseMisses 0
 
-Measured results:
+No strict packet/index/copy failure.
 
-- 48 frames / 0.25 ms -> FAIL Win32=87
-- 96 / 0.50 ms -> FAIL
-- 144 / 0.75 ms -> FAIL
-- 192 / 1.00 ms -> FAIL
-- 240 / 1.25 ms -> FAIL
-- 288 / 1.50 ms -> FAIL
-- 336 / 1.75 ms -> FAIL
-- **384 / 2.00 ms -> PASS**
-- all tested 432..960 frame candidates -> PASS
+## 96 kHz / 240 full duplex x2
 
-First accepted request:
+PASS both cycles.
 
-- 384 frames per notification
-- 2304 bytes per notification
+- cycle1: callbacks 282, renderNotif 282, captureNotif 255, capturePhaseMisses 27, captureConsumed 255
+- cycle2: callbacks 280, renderNotif 280, captureNotif 254, capturePhaseMisses 26, captureConsumed 254
+
+No strict packet/index/copy failure.
+
+The 96 kHz capture cadence still trails render by roughly 26..27 callback periods over the short validation window. Treat this as a remaining latency/cadence quality observation, not as a product lifecycle blocker. Do not weaken strict checks to hide it.
+
+## 192 kHz / 384 output-only x2
+
+PASS both cycles.
+
+Public contract verified each cycle:
+
+`min=384 max=4800 preferred=384 granularity=48`
+
+WaveRT geometry:
+
+- 384 frames/notification
+- 2304 bytes/packet
 - 4608-byte cyclic buffer
-- `ActualBufferSize=4608`
+- 2.0 ms period
 
-Every accepted test returned `ActualBufferSize == RequestedBufferSize`.
+Cycle1:
 
-Conclusion:
+- callbacks 350
+- renderNotif 350
+- latencyOut 384
+- stop=0
+- outFrames 134400
 
-The failure is not generic byte alignment. The measured boundary is a sample-rate-dependent minimum WaveRT notification duration on this X4 Windows path: 2.0 ms in the tested configuration.
+Cycle2:
+
+- callbacks 348
+- renderNotif 348
+- latencyOut 384
+- stop=0
+- outFrames 133632
+
+This closes the prior `BUFFER_WITH_NOTIFICATION Win32=87 requested=2880` blocker for the first-release architecture.
+
+## Boundary / compatibility
+
+48 kHz / 96 output:
+
+- PASS
+- callbacks 250
+
+48 kHz / 4800 output:
+
+- PASS
+- callbacks 9
+
+48 kHz / 512 compatibility output:
+
+- PASS
+- callbacks 65
 
 ---
 
-# Implemented fix — sample-rate-dependent ASIO buffer contract
+# 192 kHz geometry diagnosis — closed
 
-Current B5 branch now preserves the already-validated 1:1 ASIO-buffer-to-WaveRT-packet architecture instead of adding a new ring-buffer/timer scheduler for the first release.
+Dedicated geometry report generated `2026-09-04 13:05:25.43` established:
 
-Changes:
+- 48..336 frames per notification: FAIL Win32=87
+- 384 frames / 2.0 ms: first PASS
+- 432..960 tested candidates: PASS
+- accepted candidates returned `ActualBufferSize == RequestedBufferSize`
 
-`driver_b5.cpp`
+The failure was not generic byte alignment. It was a sample-rate-dependent minimum WaveRT notification duration on this X4 Windows path.
 
-- 192 kHz min/preferred = 384
-- `getBufferSize()` reports the selected-rate contract
-- `getLatencies()` reports 384 before buffers at 192 kHz
-- `createBuffers()` rejects sub-384 frames at 192 kHz before any WaveRT pin preparation
-- 48/96 behavior unchanged
+The chosen first-release fix is a rate-specific 384-frame minimum/preferred at 192 kHz, preserving the already-proven 1:1 host-buffer-to-WaveRT-packet architecture.
 
-`product_validation_b5_arm64ec.cpp`
+---
 
-- validates `getBufferSize()` after `setSampleRate()`
-- 192 kHz output test now runs 384 frames x2
+# What is now proven
 
-`README_B5_PRODUCTIZATION.md`
+The B5 silent product harness now proves:
 
-- documents the measured 2.0 ms boundary and current first-release contract
+- side-by-side COM/ASIO registration
+- immutable ownership gates
+- Int24LSB public channel contract
+- 48/96/192 output sample rates
+- 48/96 input exposure
+- 192 kHz rate-specific buffer contract
+- 48/96 full-duplex lifecycle
+- joined-worker shutdown
+- strict packet/index/copy/position checks remain enabled
+- min/max and 512 compatibility buffer cases
 
-No WaveRT engine file, mux-v3 file, BUSY gate, joined-worker rule, or validated B4D source was modified for this fix.
+---
+
+# What is NOT yet proven
+
+Do not infer these from the silent harness:
+
+1. audible real 24-bit program output through B5 in REAPER;
+2. real non-zero stereo capture while output is active;
+3. longer DAW-load stability;
+4. whether the 96 kHz capture phase misses cause a real recording-quality problem.
+
+`inputNonzeroSamples=0` in the validation report only means the validation had no external signal; it is not proof of capture content failure or success.
 
 ---
 
@@ -227,42 +278,15 @@ Validated B4D core remains frozen. Do not alter or bypass it.
 
 # Immediate next action
 
-Run manual workflow:
+Do not change B5 code before host-level validation unless a concrete regression appears.
 
-`Build ASIO B5 Productization`
+Use the current B5 ZIP and REAPER ARM64EC:
 
-Required build result:
+1. select `Sound Blaster X4 ARM64 ASIO B5`;
+2. test audible 24-bit output at 48 kHz first;
+3. enable a real stereo X4 input source and record/monitor while output remains active;
+4. verify both input channels receive real non-zero signal;
+5. stop, close/reopen the ASIO device, and repeat once;
+6. if stable, repeat at 96 kHz / 240 frames and specifically watch for dropout, drift, missing input blocks, or delayed capture.
 
-1. ARM64EC B5 DLL + helpers PASS;
-2. Classic ARM64 B5 DLL PASS;
-3. PE/ARM64X checks PASS;
-4. both DLLs contain `dual-event-mux-v3`;
-5. ZIP produced.
-
-Then use the new ZIP and run:
-
-`install_and_validate_b5.cmd`
-
-once.
-
-Return the new:
-
-`B5_PRODUCT_VALIDATION_REPORT.txt`
-
-Expected matrix:
-
-- 48k/240 output x3
-- 48k/240 full duplex x2
-- 96k/240 full duplex x2
-- 192k/384 output x2
-- 48k/96 output x1
-- 48k/4800 output x1
-- 48k/512 compatibility output x1
-
-The report must show the 192 kHz public buffer contract as:
-
-`min=384 max=4800 preferred=384 granularity=48`
-
-and both 192k/384 cycles must stop cleanly.
-
-Only after the full matrix passes should final REAPER validation cover audible 24-bit output plus real stereo input together.
+Only after real output + real input pass should the B5 first-release ASIO milestone be considered closed and CTCDC work resume.
