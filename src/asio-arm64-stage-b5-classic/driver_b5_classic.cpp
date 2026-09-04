@@ -1,9 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
-#include <winioctl.h>
-#include <ks.h>
-#include <ksmedia.h>
 #include <mmsystem.h>
 #include <avrt.h>
 
@@ -33,8 +30,8 @@ HANDLE WINAPI b5_create_mux_thread(
     LPDWORD);
 } // namespace
 
-// Keep Windows/COM/project headers outside the private-access macro. Only the
-// translation-unit-local B5 driver class is exposed to its mux implementation.
+// Keep Kernel Streaming headers isolated in the WaveRT engine translation unit.
+// The B5 COM/ASIO driver itself consumes only the engine's public API.
 #define CreateThread b5_create_mux_thread
 #define private public
 #include "../asio-arm64-stage-b0/driver_b5.cpp"
