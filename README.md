@@ -1,64 +1,106 @@
 # SoundBlaster-X4-ARM64
 
-Reverse-engineering research for controlling the **Creative Sound Blaster X4** on **Windows ARM64** without depending on the x64 Creative App.
+Independent Windows-on-Arm support for the **Creative Sound Blaster X4 / SB1815**.
 
-## Scope
+The project now has two separate tracks:
 
-The first target is device control, not a replacement audio driver. Basic USB audio can remain on the Windows USB Audio class driver while X4-specific controls are reproduced separately where possible.
+1. **ASIO** — independent user-mode ASIO implementation over Microsoft KS/WaveRT / `usbaudio2.sys`.
+2. **CTCDC control** — independent X4 device-control path over the USB CDC/COM interface.
 
-## Confirmed from the Android Creative App
+Creative binaries are reference-only. The independent runtime must not load or redistribute Creative binaries.
 
-- Product name: `Sound Blaster X4`
-- Internal codename: `Accent2`
-- Model identifier: `SB1815`
-- BLE control name: `Control for SB1815`
-- X4-specific resource paths for `SB1815`
-- Android BLE/GATT transport and device-control logic
+## Current status
 
-## Confirmed X4 BLE GATT Map
+### ASIO — real REAPER playback proven
 
-| Role | UUID |
-|---|---|
-| Service | `b7860001-11b8-b681-6343-5a6c2286633f` |
-| Write characteristic | `b7860002-11b8-b681-6343-5a6c2286633f` |
-| Read / notify characteristic | `b7860003-11b8-b681-6343-5a6c2286633f` |
-| CCCD | `00002902-0000-1000-8000-00805f9b34fb` |
+Stage B4D is hardware/user proven in the Windows-on-Arm REAPER build:
 
-The direction of the two characteristics is confirmed from the app callback path: `b7860002` is used with `setValue()` + `writeCharacteristic()`, while `b7860003` is registered for notifications and matched by `onCharacteristicChanged()`.
+```text
+REAPER ARM64EC
+-> registered independent ARM64EC ASIO COM DLL
+-> ASIO 2.x host contract / time-info callbacks
+-> mapped WaveRT DMA
+-> Microsoft usbaudio2.sys
+-> Sound Blaster X4
+-> audible project playback
+```
 
-See `apk-analysis/GATT_UUID_TRACE_20260831.md` for the static trace.
+Validated B4D source:
 
-## Not Yet Confirmed
+`exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-- Command opcode / command-ID layout
-- Packet framing and length fields
-- Checksum / CRC behavior
-- Exact command bytes for individual X4 settings
-- Which controls are BLE-only, USB-only, or implemented by on-device DSP state
-- Final Windows ARM64 implementation architecture
+Proven first-use configuration:
 
-## Current Milestone
+- 48 kHz
+- stereo output
+- signed 16-bit PCM transport
+- 512-frame ASIO buffer
+- X4 `msft_wave`, Render Pin 1
+- 4096-byte WaveRT cyclic buffer
+- NotificationCount=2
+- ASIO 2.x time-info callbacks
+- normal COM/ASIO registration
+- actual audible REAPER playback
 
-**Trace one simple X4 user-visible setting from UI action to the exact command bytes written to the BLE write characteristic.**
+The older Classic ARM64 B4C implementation is also hardware-proven and remains important if a future host becomes pure Classic ARM64 rather than ARM64EC.
 
-## Research Input
+### Creative reference driver
 
-The original Creative APK is **not stored in this repository**.
+The existing `Creative SB USB RT ASIO` driver also works in the current REAPER ARM64EC environment.
 
-SHA-256 of the APK used for the initial analysis:
+That makes it a useful behavioral reference for completing the independent driver: supported sample rates, bit depth, buffer sizes, input/output channels, latency reporting, and lifecycle behavior can be compared on the same X4 and same host.
 
-`d613d4203585c4d50716ef0814b8b935906229930d280f2dc96bb6d6eb0479c1`
+The goal is behavioral compatibility where useful, **not** copying proprietary implementation code.
 
-## Repository Layout
+### CTCDC / Direct Mode
 
-- `DEVICE_INFO.md` — confirmed device/application identifiers
-- `RESEARCH_NOTES.md` — chronological research log
-- `PROTOCOL.md` — protocol findings; confirmed and unresolved fields are kept separate
-- `apk-analysis/` — sanitized APK analysis notes/scripts only
-- `captures/` — sanitized protocol captures and annotations
-- `tools/` — analysis utilities
-- `src/` — future Windows ARM64 implementation
+The native Windows CTCDC path is separately hardware-proven for X4 Direct Mode.
+
+Confirmed Direct Mode frames:
+
+- OFF: `5A 39 03 00 05 00`
+- ON: `5A 39 03 00 05 01`
+
+The current project priority is to finish ASIO productization first, then return to broader CTCDC controls.
+
+## ASIO safety rule
+
+A prior ungated second render stream could trigger a kernel `WDF_VIOLATION 0x10D/5` in `usbaudio2.sys` through a stale `WDFUSBPIPE` recovery path.
+
+The current driver includes the Creative-equivalent pin-instance coexistence gate and safe BUSY refusal.
+
+**Never bypass BUSY and do not intentionally reproduce the old green-screen collision.**
+
+## Next ASIO milestone
+
+Finish the independent driver as a practical first release rather than returning to tiny A/B/C/D micro-stages.
+
+Priority order:
+
+1. stability/reopen stress
+2. 24-bit output
+3. additional X4-supported sample rates
+4. selectable ASIO buffer sizes
+5. capture/input
+6. multichannel output after the core release path is stable
+
+The next development pass should first probe the working Creative reference driver and the X4 KS data ranges, then implement the supported capability set independently.
+
+See:
+
+- `CURRENT_HANDOFF.md`
+- `NEXT_ACTION_ASIO.md`
+- `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
+- `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+- `NEXT_ACTION_CTCDC.md`
+
+## Device
+
+- Product: Sound Blaster X4
+- Codename: `Accent2`
+- Model/package: `SB1815`
+- USB VID/PID: `041E:3278`
 
 ## Rule
 
-Do not treat inferred values as confirmed. Protocol fields are promoted to **Confirmed** only after static-code evidence, runtime capture, or independent reproduction.
+Keep hardware-proven facts, static-analysis conclusions, and hypotheses explicitly separated. Do not treat an inferred protocol or driver behavior as confirmed until it is backed by runtime evidence, static evidence, or independent reproduction.
