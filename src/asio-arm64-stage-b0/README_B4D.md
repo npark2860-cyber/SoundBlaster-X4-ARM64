@@ -1,6 +1,6 @@
 # Sound Blaster X4 ARM64 ASIO — Stage B4D ARM64EC + REAPER
 
-B4D is the combined host-compatibility / registration milestone. It intentionally does not split ARM64EC porting, smoke, registration, and first REAPER load into separate A/B/C/D branches.
+B4D is the combined host-compatibility / registration milestone. It intentionally does not split ARM64EC porting, smoke, registration, registered-host loading, and first REAPER playback into separate A/B/C/D branches.
 
 ## Validated parent
 
@@ -64,6 +64,7 @@ Do not expand variables during the first REAPER proof:
 - `x4-asio-arm64.dll` — byte-identical compatibility alias used by the inherited registry-free smoke loader
 - `x4-asio-stage-b4d-smoke.exe` — ARM64EC registry-free B4C-equivalent hardware smoke
 - `x4-asio-stage-b4d-register.exe` — ARM64EC register/unregister/verify helper
+- `x4-asio-stage-b4d-host-probe.exe` — ARM64EC normal COM/registry in-process load probe
 - `test_b4d.cmd`
 - `install_b4d.cmd`
 - `uninstall_b4d.cmd`
@@ -89,7 +90,7 @@ STAGE B4C TIME INFO RESULT: PASS (ASIO2 TIME-INFO CALLBACK + B4B TRANSPORT)
 
 The inherited final label still says B4C because B4D deliberately reuses the validated smoke implementation rather than rewriting it.
 
-### 2. Register
+### 2. Register + normal host load probe
 
 Run:
 
@@ -97,7 +98,7 @@ Run:
 install_b4d.cmd
 ```
 
-The script requests elevation and the helper verifies:
+The script requests elevation and the registration helper verifies:
 
 - HKLM COM CLSID
 - `InprocServer32` points to the packaged `x4-asio-arm64ec.dll`
@@ -105,11 +106,24 @@ The script requests elevation and the helper verifies:
 - HKLM `SOFTWARE\\ASIO\\Sound Blaster X4 ARM64 ASIO`
 - ASIO CLSID matches the COM CLSID
 
-Expected helper result:
+Expected registration result:
 
 ```text
 B4D REGISTER RESULT: PASS
 ```
+
+After registration, the script automatically runs `x4-asio-stage-b4d-host-probe.exe` without direct `LoadLibrary` or manual DLL path selection. The probe uses normal `CoCreateInstance()` discovery through the registry and then calls the IASIO vtable only for metadata.
+
+Expected host proof:
+
+```text
+CoCreateInstance hr=0x00000000
+driverName=Sound Blaster X4 ARM64
+driverVersion=107
+B4D HOST PROBE RESULT: PASS (REGISTRY COM LOAD + IASIO VTABLE)
+```
+
+This proves the ARM64EC host can discover and load the registered in-process ASIO DLL before REAPER is involved.
 
 ### 3. First REAPER proof
 
@@ -152,6 +166,13 @@ B4D UNREGISTER RESULT: PASS
 The B4D GitHub Actions build must use the Visual Studio `ARM64EC` platform, not Classic ARM64.
 
 For final PE files, raw `0x8664` alone is not sufficient because pure x64 also uses that machine value. The workflow additionally checks the Microsoft linker header dump for `ARM64X`, which identifies the linked ARM64EC/x64-compatible image.
+
+The workflow validates all four executable images:
+
+- ARM64EC ASIO DLL
+- ARM64EC registry-free smoke
+- ARM64EC registration helper
+- ARM64EC registered-host probe
 
 ## Still excluded
 
