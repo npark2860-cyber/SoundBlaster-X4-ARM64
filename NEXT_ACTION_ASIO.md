@@ -8,25 +8,19 @@ B4D remains the proven fallback:
 
 `exp/windows-arm64-asio-com-stage-b4d-reaper-registration@a95a95d014bcc1c3a521be41325841ae96dc8a61`
 
-Known-good B4D runtime:
-
-- REAPER ARM64EC real playback
-- 48 kHz
-- stereo output
-- signed 16-bit PCM
-- 512 ASIO frames
-- Render Pin 1
-- local + global BUSY gates
-- joined worker stop
-- ASIO 2.x time-info
-
 Do not alter B4D unless B5 exposes a concrete regression.
+
+Immutable safety remains:
+
+- never bypass local/global BUSY gates
+- never intentionally reproduce the historical active-render collision
+- never tear hardware down before the worker is joined
 
 ---
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@c69cfa98a497c0619ccdbe0fb7f40f0dd13ea687`
+`exp/windows-arm64-asio-b5-capability-productization@869307d44750af3e23c2de68dc84cc32d9b5e05f`
 
 B5 first-release contract remains:
 
@@ -39,145 +33,104 @@ B5 first-release contract remains:
 - Internal Clock
 - ASIO 2.x time-info
 - Render Pin 1 + Capture Pin 4 WaveRT
-- immutable local/global BUSY gates before pin creation
-- joined worker before hardware teardown
 
 ---
 
 # Latest runtime evidence
 
-Returned report generated 2026-09-04 11:50:11.
+Latest returned runtime report still proves:
 
-### PASS — 48 kHz / 240 output-only
+- 48k/240 output x3 PASS
+- 48k/240 full duplex x2 PASS
+- 96k/240 full duplex failure caused by serial Render->Capture notification waits and auto-reset event coalescing
 
-Three cycles:
+The dual-event mux was introduced to fix that structural problem.
 
-- callbacks 139 / 139 / 140
-- stop=ASE_OK
-- workerJoined=YES
-- no packet/index/copy errors
+---
 
-### PASS — 48 kHz / 240 full duplex
+# Latest build failure
 
-Two cycles:
+The first mux build failed before DLL creation:
 
-- callbacks=141 each
-- renderNotif=142 each
-- captureNotif=141 each
-- outFrames=inFrames=33840 each
-- stop=ASE_OK
+```text
+cguid.h(33,18): error C2059: syntax error: '__uuidof'
+```
 
-`inputNonzeroSamples=0` still means actual microphone/line signal content remains for the final REAPER test.
+while compiling `driver_b5_arm64ec.cpp` with Windows SDK 10.0.26100.0.
 
-### FAIL — 96 kHz / 240 full duplex
+Cause: `#define private public` was active while project headers pulled Windows/COM SDK declarations.
 
-First cycle ended after 97 callbacks with:
-
-- worker=1
-- idx=8
-- outCopy=0
-- inCopy=0
-- rPkt=9
-- rPos=0
-- cPkt=1
-
-The trace shows repeated render packet jumps (`23->25`, `35->37`, `43->45`, etc.) and later a capture packet jump plus `GETREADPACKET` Win32 21.
-
-The defect is now identified as the original full-duplex worker's serial wait structure. It waited render, then capture, on one thread. At a 2.5 ms period, auto-reset render notifications could coalesce while the thread was blocked on capture.
+This is a compile-time adapter error only. Do not derive any new hardware conclusion from this run.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
 
 ---
 
-# Fix now implemented — dual-event-mux-v1
+# Fix now implemented — dual-event-mux-v2
 
-New shared B5 worker adapter:
+The SDK-facing keyword macro contamination is removed.
 
-`src/asio-arm64-stage-b0/driver_b5_mux_adapter.inl`
+ARM64EC and Classic adapters now include all SDK/project headers normally first.
 
-Both ARM64EC and Classic ARM64 B5 builds route worker creation through it.
+WaveRT engine access from the mux is through a narrow public API:
 
-Full-duplex worker simultaneously waits on:
+`process_signaled_notification(...)`
 
-1. stop
-2. capture notification
-3. render notification
+Implementation:
 
-Capture is intentionally the lower wait index when both direction events are already signaled.
+`wavert_engine_b5_signaled.inl`
 
-Behavior:
+Behavior retained:
 
-- render/capture events serviced independently
-- two capture slots tagged with absolute capture packet numbers
-- render packet N paired with exact capture packet N-1
-- ASIO callback runs only when that exact pair exists
-- render write-ahead remains `renderPacket + 1`
-- second render arrival before previous pair synchronization is a real failure
-- capture `ERROR_NOT_READY` is transient/no-data, not immediate hardware failure
-- `MoreData=TRUE` is drained immediately
+- simultaneous stop/capture/render wait in full duplex
+- capture lower wait index
+- exact render N / capture N-1 pairing
+- render write-ahead N+1
+- capture `ERROR_NOT_READY` => transient `NoData`
+- `MoreData=TRUE` drain
+- strict packet discontinuity detection
+- strict callback-index/copy/sync failure handling
+- MMCSS `Pro Audio` + `AVRT_PRIORITY_CRITICAL`
 
-Strict failures remain:
+Runtime/build marker is now:
 
-- render packet discontinuity
-- capture packet discontinuity
-- render presentation-position regression
-- repeated callback buffer index
-- render/capture copy failure
-- duplex synchronization failure
+`dual-event-mux-v2`
 
-Realtime worker itself enters MMCSS `Pro Audio` with `AVRT_PRIORITY_CRITICAL`; fallback is `THREAD_PRIORITY_HIGHEST` only if MMCSS registration fails.
-
-The old per-notification printf path is bypassed in the new worker hot path.
-
----
-
-# Mandatory runtime/build marker
-
-Marker:
-
-`dual-event-mux-v1`
-
-Expected new runtime lines:
-
-`B5 worker realtime adapter=dual-event-mux-v1 ...`
-
-`B5 worker START adapter=dual-event-mux-v1 ...`
-
-The main build workflow now scans both produced DLL binaries for this marker. Packaging fails if either ARM64EC or Classic DLL lacks it.
-
-Therefore do not accept a runtime report as a test of this fix unless the report contains `adapter=dual-event-mux-v1`.
+The main workflow scans both built DLLs for this exact marker and fails before packaging if either lacks it.
 
 ---
 
 # Immediate action
 
-Do **not** reuse any previous validation ZIP.
-
 Run manual workflow:
 
 `Build ASIO B5 Productization`
 
-Required build outcome:
+Do **not** run hardware validation until the workflow passes all of:
 
-1. checkout current B5 branch;
-2. ARM64EC compile/link PASS;
-3. Classic ARM64 compile/link PASS;
-4. PE/ARM64X checks PASS;
-5. log contains `B5 mux runtime marker verified in both DLLs`;
-6. only then package/upload ZIP.
+1. ARM64EC DLL compile/link;
+2. B5 helper compile/link;
+3. Classic ARM64 DLL compile/link;
+4. PE/ARM64X architecture checks;
+5. `dual-event-mux-v2` present in both DLLs;
+6. ZIP package produced.
 
-If build fails, fix on the same B5 branch. Do not hardware-test a partial package.
+If build fails, return the exact Actions log. Continue fixing all related build/link/workflow problems on this same B5 branch; do not create a microbranch and do not request a hardware micro-test.
 
-After Actions PASS:
+After build PASS only:
 
 1. download the new `SoundBlaster-X4-ASIO-B5-Productization.zip`;
-2. close REAPER/media/Creative App and other X4 playback; move Windows default endpoint away if needed;
-3. run the new `install_and_validate_b5.cmd` once;
-4. return `B5_PRODUCT_VALIDATION_REPORT.txt`.
+2. close other X4 playback/default endpoint ownership as before;
+3. run `install_and_validate_b5.cmd` once;
+4. return the new `B5_PRODUCT_VALIDATION_REPORT.txt`.
 
-The next report must contain `adapter=dual-event-mux-v1` and must attempt the full strict matrix:
+A runtime report counts as mux-v2 evidence only if it contains:
+
+`adapter=dual-event-mux-v2`
+
+The strict matrix must still reach:
 
 - 48k/240 output x3
 - 48k/240 full duplex x2
@@ -188,13 +141,3 @@ The next report must contain `adapter=dual-event-mux-v1` and must attempt the fu
 - 48k/512 compatibility output x1
 
 Only after full matrix PASS should final REAPER validation cover audible 24-bit output plus real stereo input together.
-
-## Immutable safety
-
-Never bypass BUSY.
-
-Historical collision class remains:
-
-- `WDF_VIOLATION 0x10D`
-- Parameter 1 = 5
-- stale/destroyed `WDFUSBPIPE` path in `usbaudio2` recovery
