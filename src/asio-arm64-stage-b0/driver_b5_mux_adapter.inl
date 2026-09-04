@@ -7,18 +7,8 @@
 
 namespace {
 
-bool b5_mux_copy_capture(X4AsioDriverB5* self, ULONG packet_number) {
-    const long buffer_index = static_cast<long>(packet_number % kNotificationCount);
-    if (!self->capture_.read_capture_packet24(
-            packet_number,
-            self->input_buffers_[0][buffer_index],
-            self->input_buffers_[1][buffer_index],
-            static_cast<ULONG>(self->buffer_frames_))) {
-        InterlockedIncrement(&self->capture_copy_errors_);
-        return false;
-    }
-    return true;
-}
+constexpr char kB5MuxAdapter[] = "dual-event-mux-v3";
+constexpr ULONG kB5CaptureStarvationLimit = 4;
 
 bool b5_mux_dispatch_callback(
     X4AsioDriverB5* self,
@@ -112,12 +102,14 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     if (!self || !self->stop_event_) return ERROR_INVALID_PARAMETER;
 
     std::printf(
-        "B5 worker START adapter=dual-event-mux-v2 thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
-        GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
+        "B5 worker START adapter=%s thread=%lu rate=%.0f frames=%ld render=%d capture=%d\n",
+        kB5MuxAdapter, GetCurrentThreadId(), self->sample_rate_, self->buffer_frames_,
         self->render_selected_ ? 1 : 0, self->capture_selected_ ? 1 : 0);
 
     ULONG capture_not_ready = 0;
     ULONG capture_more_data = 0;
+    ULONG capture_phase_misses = 0;
+    ULONG capture_packets_consumed = 0;
 
     auto fail_worker = [&](const char* direction, const char* message) -> DWORD {
         InterlockedExchange(&self->worker_failed_, 1);
@@ -127,51 +119,147 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     };
 
     if (self->render_selected_ && self->capture_selected_) {
-        // Capture has the lower wait index intentionally. If both auto-reset
-        // events are signaled, consume input first so capture cannot be starved
-        // by the render cadence at 96 kHz.
+        // Render is the ASIO callback clock. Capture is an independent producer.
+        // Do not hold a render callback waiting for an exact capture packet: at
+        // 96 kHz the two WaveRT notification streams can have a stable phase
+        // offset even though both packet sequences are continuous. Capture is
+        // staged independently and the oldest unconsumed packet is presented at
+        // the next render callback. Actual packet discontinuity remains fatal.
         HANDLE handles[3] = {
             self->stop_event_,
             self->capture_.notification_event(),
             self->render_.notification_event(),
         };
 
-        bool capture_slot_valid[kNotificationCount] = {false, false};
-        ULONG capture_slot_packet[kNotificationCount] = {0, 0};
-        bool pending_render = false;
-        ULONG pending_render_packet = 0;
+        alignas(64) std::uint8_t capture_stage
+            [kNotificationCount][2][kMaxBufferFrames * kBytesPerAsioSample]{};
+        bool capture_stage_valid[kNotificationCount] = {false, false};
+        ULONG capture_stage_packet[kNotificationCount] = {0, 0};
+        bool have_capture_consumed = false;
+        ULONG last_capture_consumed = 0;
+        ULONG consecutive_capture_misses = 0;
 
-        auto try_dispatch_pending = [&]() -> bool {
-            if (!pending_render) return true;
-            if (pending_render_packet == 0) return false;
-
-            const ULONG expected_capture = pending_render_packet - 1;
-            const ULONG slot = expected_capture % kNotificationCount;
-            if (!capture_slot_valid[slot]) return true;
-            if (capture_slot_packet[slot] < expected_capture) return true;
-            if (capture_slot_packet[slot] != expected_capture) {
+        auto stage_capture_packet = [&](ULONG capture_packet) -> bool {
+            const ULONG slot = capture_packet % kNotificationCount;
+            if (capture_stage_valid[slot] &&
+                capture_stage_packet[slot] != capture_packet) {
                 std::printf(
-                    "B5 worker duplex sync mismatch render=%lu expectedCapture=%lu slotCapture=%lu\n",
-                    pending_render_packet, expected_capture, capture_slot_packet[slot]);
+                    "B5 worker capture staging overrun new=%lu slot=%lu old=%lu\n",
+                    capture_packet, slot, capture_stage_packet[slot]);
                 return false;
             }
 
-            const long buffer_index = static_cast<long>(
-                (pending_render_packet + 1) % kNotificationCount);
-            if (buffer_index != static_cast<long>(slot)) {
-                std::printf(
-                    "B5 worker duplex parity mismatch render=%lu capture=%lu buffer=%ld slot=%lu\n",
-                    pending_render_packet, expected_capture, buffer_index, slot);
+            if (!self->capture_.read_capture_packet24(
+                    capture_packet,
+                    capture_stage[slot][0],
+                    capture_stage[slot][1],
+                    static_cast<ULONG>(self->buffer_frames_))) {
+                InterlockedIncrement(&self->capture_copy_errors_);
                 return false;
             }
 
-            if (!b5_mux_dispatch_callback(
-                    self, pending_render_packet, buffer_index)) {
-                return false;
+            capture_stage_valid[slot] = true;
+            capture_stage_packet[slot] = capture_packet;
+            return true;
+        };
+
+        auto drain_capture_available = [&]() -> int {
+            // Return 1 when at least one packet was staged, 0 when no packet was
+            // available, and -1 on a real capture failure.
+            int staged = 0;
+            BOOL more_data = FALSE;
+            do {
+                ULONG capture_packet = 0;
+                more_data = FALSE;
+                const X4WaveRtB5ProcessResult capture_result =
+                    b5_mux_capture_event(self, &capture_packet, &more_data);
+
+                if (capture_result == X4WaveRtB5ProcessResult::NoData) {
+                    ++capture_not_ready;
+                    break;
+                }
+                if (capture_result != X4WaveRtB5ProcessResult::Notification) {
+                    return -1;
+                }
+                if (!stage_capture_packet(capture_packet)) {
+                    return -1;
+                }
+                staged = 1;
+                if (more_data) ++capture_more_data;
+            } while (more_data &&
+                     WaitForSingleObject(self->stop_event_, 0) != WAIT_OBJECT_0);
+            return staged;
+        };
+
+        auto choose_capture_slot = [&]() -> int {
+            if (!have_capture_consumed) {
+                int selected = -1;
+                for (ULONG slot = 0; slot < kNotificationCount; ++slot) {
+                    if (!capture_stage_valid[slot]) continue;
+                    if (selected < 0 ||
+                        capture_stage_packet[slot] <
+                            capture_stage_packet[static_cast<ULONG>(selected)]) {
+                        selected = static_cast<int>(slot);
+                    }
+                }
+                return selected;
             }
 
-            capture_slot_valid[slot] = false;
-            pending_render = false;
+            const ULONG expected = last_capture_consumed + 1;
+            const ULONG slot = expected % kNotificationCount;
+            if (capture_stage_valid[slot] &&
+                capture_stage_packet[slot] == expected) {
+                return static_cast<int>(slot);
+            }
+
+            // A later staged packet without the expected predecessor would mean
+            // the capture producer/consumer contract has been violated even if
+            // the hardware packet counter itself remained sequential.
+            for (ULONG other = 0; other < kNotificationCount; ++other) {
+                if (capture_stage_valid[other] &&
+                    capture_stage_packet[other] > expected) {
+                    std::printf(
+                        "B5 worker capture staging sequence mismatch expected=%lu staged=%lu\n",
+                        expected, capture_stage_packet[other]);
+                    return -2;
+                }
+            }
+            return -1;
+        };
+
+        auto present_capture_for_render = [&](long buffer_index) -> bool {
+            const int selected = choose_capture_slot();
+            if (selected == -2) return false;
+
+            const SIZE_T bytes =
+                static_cast<SIZE_T>(self->buffer_frames_) * kBytesPerAsioSample;
+            if (selected < 0) {
+                ZeroMemory(self->input_buffers_[0][buffer_index], bytes);
+                ZeroMemory(self->input_buffers_[1][buffer_index], bytes);
+                ++capture_phase_misses;
+                ++consecutive_capture_misses;
+                if (consecutive_capture_misses > kB5CaptureStarvationLimit) {
+                    std::printf(
+                        "B5 worker capture starvation consecutive=%lu total=%lu\n",
+                        consecutive_capture_misses, capture_phase_misses);
+                    return false;
+                }
+                return true;
+            }
+
+            const ULONG slot = static_cast<ULONG>(selected);
+            std::memcpy(
+                self->input_buffers_[0][buffer_index],
+                capture_stage[slot][0], bytes);
+            std::memcpy(
+                self->input_buffers_[1][buffer_index],
+                capture_stage[slot][1], bytes);
+
+            last_capture_consumed = capture_stage_packet[slot];
+            have_capture_consumed = true;
+            capture_stage_valid[slot] = false;
+            ++capture_packets_consumed;
+            consecutive_capture_misses = 0;
             return true;
         };
 
@@ -186,60 +274,34 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             }
 
             if (wait == WAIT_OBJECT_0 + 1) {
-                BOOL more_data = FALSE;
-                do {
-                    ULONG capture_packet = 0;
-                    more_data = FALSE;
-                    const X4WaveRtB5ProcessResult capture_result =
-                        b5_mux_capture_event(
-                            self, &capture_packet, &more_data);
-
-                    if (capture_result == X4WaveRtB5ProcessResult::NoData) {
-                        ++capture_not_ready;
-                        break;
-                    }
-                    if (capture_result != X4WaveRtB5ProcessResult::Notification) {
-                        return fail_worker("CAPTURE", self->capture_.last_message());
-                    }
-                    if (!b5_mux_copy_capture(self, capture_packet)) {
-                        return fail_worker("CAPTURE", self->capture_.last_message());
-                    }
-
-                    const ULONG slot = capture_packet % kNotificationCount;
-                    if (capture_slot_valid[slot] &&
-                        capture_slot_packet[slot] != capture_packet) {
-                        return fail_worker(
-                            "DUPLEX",
-                            "capture cyclic slot would overwrite an unconsumed packet");
-                    }
-                    capture_slot_valid[slot] = true;
-                    capture_slot_packet[slot] = capture_packet;
-
-                    if (!try_dispatch_pending()) {
-                        return fail_worker(
-                            "DUPLEX", "capture/render synchronization failed");
-                    }
-
-                    if (more_data) ++capture_more_data;
-                } while (more_data &&
-                         WaitForSingleObject(self->stop_event_, 0) != WAIT_OBJECT_0);
-            } else {
-                if (pending_render) {
-                    return fail_worker(
-                        "DUPLEX",
-                        "next render notification arrived before prior capture synchronization");
+                if (drain_capture_available() < 0) {
+                    return fail_worker("CAPTURE", self->capture_.last_message());
                 }
+                continue;
+            }
 
-                ULONG render_packet = 0;
-                if (!b5_mux_render_event(self, &render_packet)) {
-                    return fail_worker("RENDER", self->render_.last_message());
-                }
-                pending_render = true;
-                pending_render_packet = render_packet;
-                if (!try_dispatch_pending()) {
-                    return fail_worker(
-                        "DUPLEX", "render/capture synchronization failed");
-                }
+            // A capture packet can become readable just before its auto-reset
+            // event is observed. Opportunistically query once on every render
+            // wake so output never waits for the capture notification phase.
+            if (drain_capture_available() < 0) {
+                return fail_worker("CAPTURE", self->capture_.last_message());
+            }
+
+            ULONG render_packet = 0;
+            if (!b5_mux_render_event(self, &render_packet)) {
+                return fail_worker("RENDER", self->render_.last_message());
+            }
+
+            const long buffer_index = static_cast<long>(
+                (render_packet + 1) % kNotificationCount);
+            if (!present_capture_for_render(buffer_index)) {
+                return fail_worker(
+                    "DUPLEX", "capture staging/starvation failure");
+            }
+            if (!b5_mux_dispatch_callback(
+                    self, render_packet, buffer_index)) {
+                return fail_worker(
+                    "DUPLEX", "callback/render copy failed");
             }
         }
     } else if (self->render_selected_) {
@@ -297,12 +359,17 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
                 if (capture_result != X4WaveRtB5ProcessResult::Notification) {
                     return fail_worker("CAPTURE", self->capture_.last_message());
                 }
-                if (!b5_mux_copy_capture(self, capture_packet)) {
-                    return fail_worker("CAPTURE", self->capture_.last_message());
-                }
 
                 const long buffer_index = static_cast<long>(
                     capture_packet % kNotificationCount);
+                if (!self->capture_.read_capture_packet24(
+                        capture_packet,
+                        self->input_buffers_[0][buffer_index],
+                        self->input_buffers_[1][buffer_index],
+                        static_cast<ULONG>(self->buffer_frames_))) {
+                    InterlockedIncrement(&self->capture_copy_errors_);
+                    return fail_worker("CAPTURE", self->capture_.last_message());
+                }
                 if (!b5_mux_dispatch_callback(
                         self, capture_packet, buffer_index)) {
                     return fail_worker("CAPTURE", "callback failed");
@@ -314,8 +381,9 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     }
 
     std::printf(
-        "B5 worker EXIT adapter=dual-event-mux-v2 thread=%lu captureNotReady=%lu captureMoreData=%lu\n",
-        GetCurrentThreadId(), capture_not_ready, capture_more_data);
+        "B5 worker EXIT adapter=%s thread=%lu captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\n",
+        kB5MuxAdapter, GetCurrentThreadId(), capture_not_ready,
+        capture_more_data, capture_phase_misses, capture_packets_consumed);
     return ERROR_SUCCESS;
 }
 
@@ -334,7 +402,8 @@ DWORD WINAPI b5_mux_thread_entry(LPVOID parameter) {
     }
 
     std::printf(
-        "B5 worker realtime adapter=dual-event-mux-v2 mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
+        "B5 worker realtime adapter=%s mmcss=%s priority=%s taskIndex=%lu error=%lu thread=%lu\n",
+        kB5MuxAdapter,
         mmcss ? "Pro Audio" : "FALLBACK",
         priority_ok ? "OK" : "FAIL",
         task_index, mmcss_error, GetCurrentThreadId());
