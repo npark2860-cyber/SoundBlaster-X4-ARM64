@@ -34,7 +34,7 @@ set_property(TARGET x4-asio-arm64 PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_executable(x4-asio-stage-b4c-smoke
-  smoke_b4c.cpp
+  smoke_b4c_monotonic.cpp
 )
 target_compile_features(x4-asio-stage-b4c-smoke PRIVATE cxx_std_17)
 target_compile_definitions(x4-asio-stage-b4c-smoke PRIVATE
