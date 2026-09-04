@@ -53,7 +53,7 @@ Independent B4D lifecycle x3 also re-passed in the same capture.
 
 Current B5 branch:
 
-`exp/windows-arm64-asio-b5-capability-productization@60de28df150776eb8ff60ebb74d0c84483903f79`
+`exp/windows-arm64-asio-b5-capability-productization@1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
 
 Implemented B5 contract remains:
 
@@ -77,26 +77,34 @@ Validation identity remains side-by-side:
 
 so proven B4D registration remains available.
 
-## Latest compile failure and fix
+## Compile progression
 
-First `Build ASIO B5 Productization` run reached the new B5 ARM64EC sources and failed only on SDK compatibility:
+First build exposed SDK compatibility in the new WaveRT source and was fixed.
 
-- `_countof` unavailable in the ARM64EC adapted shared source;
-- Windows SDK 10.0.26100.0 uses `KSRTAUDIO_GETREADPACKET_INFO::PerformanceCounterValue`, not `PerformanceCount`;
-- C4324 was informational padding from intentional 64-byte host-buffer alignment.
+Second build successfully produced:
 
-Fixed on the same B5 branch without touching validated B4D core:
+`x4-asio-arm64ec-b5.dll`
 
-- ARM64EC WaveRT SDK adapter added compatibility definitions;
-- Classic ARM64 WaveRT adapter added with the same definitions;
-- Classic CMake switched to that adapter;
-- C4324 suppressed only on B5 driver targets.
+so the ARM64EC B5 transport DLL itself now has compile/link PASS evidence.
+
+The same run then failed only in `register_b5_arm64ec.cpp` because four `_countof` uses remained. Non-fatal B5 link warnings also came from reusing the B4D export file.
+
+Latest fixes on the same B5 branch:
+
+- removed the four register-helper `_countof` uses;
+- added `driver_b5.def` with B5-only PRIVATE COM exports and no conflicting LIBRARY name;
+- ARM64EC and Classic ARM64 B5 targets both use `driver_b5.def`;
+- original B4D `driver.def` is unchanged.
 
 See:
 
 `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
 
-After the fix B5 is ahead 18 / behind 0 from validated B4D, with validated B4D still the merge base.
+B5 now compares against validated B4D as:
+
+- ahead 22
+- behind 0
+- merge base = validated B4D
 
 ---
 
@@ -104,13 +112,22 @@ After the fix B5 is ahead 18 / behind 0 from validated B4D, with validated B4D s
 
 Re-run `Build ASIO B5 Productization`.
 
-The workflow explicitly checks out the current B5 branch, so the rebuild must use:
+The workflow explicitly checks out the current B5 branch, so this run must use:
 
-`60de28df150776eb8ff60ebb74d0c84483903f79`
+`1821f4ff514aa1ee7bf2aa7a1091d6d09a20ef01`
 
 Do not perform hardware validation yet.
 
-If compile fails again, fix the remaining compiler/linker issues on the same B5 branch and keep bundling changes; do not return to A/B/C/D micro-tests.
+This build should now continue past the already-proven ARM64EC B5 DLL into:
+
+1. B5 register helper;
+2. B5 product validation host;
+3. capability/KS helper targets in the combined build;
+4. Classic ARM64 B5 DLL;
+5. PE/ARM64X architecture checks;
+6. final productization ZIP.
+
+If it fails again, fix all remaining compile/link issues on this same B5 branch and keep changes bundled; do not return to A/B/C/D micro-tests.
 
 After Actions PASS:
 
