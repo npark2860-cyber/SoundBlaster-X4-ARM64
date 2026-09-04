@@ -41,6 +41,7 @@ jobs:
           $dll = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-arm64ec.dll"
           $smoke = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-stage-b4d-smoke.exe"
           $register = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-stage-b4d-register.exe"
+          $hostProbe = Join-Path $PWD "build/asio-arm64-stage-b4d/Release/x4-asio-stage-b4d-host-probe.exe"
 
           $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio/Installer/vswhere.exe"
           $vs = & $vswhere -latest -products * -property installationPath
@@ -50,7 +51,7 @@ jobs:
           if (-not $link) { throw "link.exe not found for ARM64X header verification" }
           "Header verifier: $($link.FullName)"
 
-          foreach ($file in @($dll, $smoke, $register)) {
+          foreach ($file in @($dll, $smoke, $register, $hostProbe)) {
             if (-not (Test-Path $file)) {
               throw "Expected output was not produced: $file"
             }
@@ -77,6 +78,7 @@ jobs:
           Copy-Item $dll dist/x4-asio-arm64.dll
           Copy-Item $smoke dist/x4-asio-stage-b4d-smoke.exe
           Copy-Item $register dist/x4-asio-stage-b4d-register.exe
+          Copy-Item $hostProbe dist/x4-asio-stage-b4d-host-probe.exe
           Copy-Item src/asio-arm64-stage-b0/test_b4d.cmd dist/test_b4d.cmd
           Copy-Item src/asio-arm64-stage-b0/install_b4d.cmd dist/install_b4d.cmd
           Copy-Item src/asio-arm64-stage-b0/uninstall_b4d.cmd dist/uninstall_b4d.cmd
@@ -90,7 +92,7 @@ jobs:
           "ARM64EC DLL alias hash match: $actualHash"
 
           Compress-Archive `
-            -Path dist/x4-asio-arm64ec.dll,dist/x4-asio-arm64.dll,dist/x4-asio-stage-b4d-smoke.exe,dist/x4-asio-stage-b4d-register.exe,dist/test_b4d.cmd,dist/install_b4d.cmd,dist/uninstall_b4d.cmd,dist/README.md `
+            -Path dist/x4-asio-arm64ec.dll,dist/x4-asio-arm64.dll,dist/x4-asio-stage-b4d-smoke.exe,dist/x4-asio-stage-b4d-register.exe,dist/x4-asio-stage-b4d-host-probe.exe,dist/test_b4d.cmd,dist/install_b4d.cmd,dist/uninstall_b4d.cmd,dist/README.md `
             -DestinationPath dist/SoundBlaster-X4-ASIO-Stage-B4D-REAPER-ARM64EC.zip `
             -Force
 
