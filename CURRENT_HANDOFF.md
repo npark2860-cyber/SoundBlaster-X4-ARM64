@@ -22,23 +22,24 @@ Validated Classic ARM64 B4C source:
 
 Current B5 productization source:
 
-`exp/windows-arm64-asio-b5-capability-productization@869307d44750af3e23c2de68dc84cc32d9b5e05f`
+`exp/windows-arm64-asio-b5-capability-productization@9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
 
 At the start of a later chat, verify actual GitHub heads again. Do not reconstruct state from conversation memory.
 
 ## Read order
 
 1. `CURRENT_HANDOFF.md`
-2. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
-3. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
-4. `DEBUG_HISTORY_20260904_ASIO_B5_RUNTIME_48K_PASS_96K_SCHEDULING_FIX.md`
-5. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
-6. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
-7. `NEXT_ACTION_ASIO.md`
-8. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
-9. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
-10. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
-11. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
+2. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_CGUID_SECOND_FAILURE_KS_HEADER_ISOLATION.md`
+3. `DEBUG_HISTORY_20260904_ASIO_B5_MUX_V2_ARM64EC_CGUID_COMPILE_FIX.md`
+4. `DEBUG_HISTORY_20260904_ASIO_B5_96K_DUPLEX_EVENT_COALESCING_MUX_FIX.md`
+5. `DEBUG_HISTORY_20260904_ASIO_B5_RUNTIME_48K_PASS_96K_SCHEDULING_FIX.md`
+6. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCT_VALIDATION_RUNTIME_BUSY_RACE.md`
+7. `DEBUG_HISTORY_20260904_ASIO_B5_PRODUCTIZATION_COMPILE_SDK_FIX.md`
+8. `NEXT_ACTION_ASIO.md`
+9. `DEBUG_HISTORY_20260904_CREATIVE_SB_USB_RT_ASIO_ARM64EC_RUNTIME.md`
+10. `DEBUG_HISTORY_20260904_ASIO_COM_STAGE_B4D_REAPER_PLAYBACK_RUNTIME_SUCCESS.md`
+11. `DEBUG_HISTORY_20260904_ASIO_ACTIVE_PLAYBACK_COLLISION_RUNTIME.md`
+12. `DEBUG_HISTORY_20260903_ASIO_WDF_CRASH_FINGERPRINT.md`
 
 CTCDC remains deferred until the B5 first-release ASIO pass is closed.
 
@@ -106,81 +107,63 @@ This is why the B5 dual-event mux path was introduced.
 
 ---
 
-# Latest build failure — mux v1 did not compile
+# Mux v2 build status — second identical C2059
 
-Manual `Build ASIO B5 Productization` ARM64EC build failed before producing a DLL:
+The next manual ARM64EC build again failed before DLL creation:
 
 ```text
 Windows Kits\10\Include\10.0.26100.0\um\cguid.h(33,18):
 error C2059: syntax error: '__uuidof'
 ```
 
-The error occurred while compiling `driver_b5_arm64ec.cpp`.
+while compiling `driver_b5_arm64ec.cpp`.
 
-Root cause: the first mux adapter placed `#define private public` around project headers. Those headers pulled Windows/COM SDK declarations while the C++ keyword macro was active, contaminating `cguid.h`.
+Therefore the previous explanation that relocating `#define private public` alone removed SDK contamination was incomplete.
 
-This run provides no new hardware/runtime result.
+This run has no runtime/hardware meaning.
 
 ---
 
-# Mux v2 compile fix implemented
+# New compile fix — isolate KS headers from COM driver
 
 Current B5:
 
-`869307d44750af3e23c2de68dc84cc32d9b5e05f`
+`9ae7ba97277ef2bfb11bb0dbce42f671ed20b20d`
 
-## SDK header contamination removed
+The mux-v2 driver translation units had added these headers before ASIO/COM declarations:
 
-ARM64EC and Classic adapters now parse all Windows/COM/project headers normally before the translation-unit-local driver access macro is introduced.
+- `winioctl.h`
+- `ks.h`
+- `ksmedia.h`
 
-The macro can no longer reach SDK declarations such as `cguid.h::__uuidof`.
+Mux v2 no longer needs them directly because it uses the WaveRT engine's public API. They were removed from both ARM64EC and Classic B5 driver adapters.
 
-## WaveRT mux access narrowed to public API
+Kernel Streaming headers remain in the WaveRT engine translation units, where KS IOCTL/property types are actually required.
 
-`wavert_engine_b5.h` now exposes:
+No runtime logic or safety behavior changed:
 
-`process_signaled_notification(...)`
+- dual-event mux remains
+- exact render N / capture N-1 pairing remains
+- render write-ahead N+1 remains
+- capture `ERROR_NOT_READY` remains transient
+- real packet discontinuities remain fatal
+- callback/copy/sync failures remain fatal
+- MMCSS `Pro Audio` remains
+- BUSY gates remain immutable
 
-Implementation:
-
-`src/asio-arm64-stage-b0/wavert_engine_b5_signaled.inl`
-
-Both ARM64EC and Classic engine adapters include it after the existing shared WaveRT implementation.
-
-The mux no longer reads WaveRT private pin/state/stat fields. It uses:
-
-- `notification_event()`
-- `process_signaled_notification()`
-- `stats()`
-- existing render/capture copy methods
-
-Capture `ERROR_NOT_READY` maps to `NoData` and is transient. Actual capture packet discontinuity remains strict/fatal.
-
-## Runtime worker marker
-
-Mux marker advanced to:
+Runtime/build marker remains:
 
 `dual-event-mux-v2`
 
-Expected runtime lines:
-
-`B5 worker realtime adapter=dual-event-mux-v2 ...`
-
-`B5 worker START adapter=dual-event-mux-v2 ...`
-
-The main build workflow now refuses to package unless this marker exists in both built DLLs.
-
 ---
 
-# B4D protection status
+# Remaining architecture risk if C2059 repeats
 
-Compare current B5 against validated B4D:
+The ARM64EC adapter still temporarily defines `_M_ARM64` and undefines `_M_ARM64EC` around the shared `driver_b5.cpp` because that shared source currently rejects ARM64EC directly.
 
-- status: ahead
-- ahead_by: 41
-- behind_by: 0
-- merge base: exactly `a95a95d014bcc1c3a521be41325841ae96dc8a61`
-- validated B4D core remains untouched
+Microsoft documents that an ARM64EC compilation normally exposes x64-compatible architecture macros (`_M_AMD64`) plus `_M_ARM64EC`, not `_M_ARM64`.
+
+Therefore, if the same `cguid.h::__uuidof` error repeats after the KS-header isolation change, do not do another include-order patch. The next engineering action is to make the B5 shared source directly ARM64EC-aware and remove the architecture macro shim entirely.
 
 ---
 
@@ -192,27 +175,15 @@ Run manual workflow:
 
 `Build ASIO B5 Productization`
 
-The build must now prove, in order:
+The build must prove:
 
 1. ARM64EC B5 DLL compile/link PASS;
-2. B5 register/product-validation/capability/KS helpers PASS compile;
+2. B5 helpers compile/link PASS;
 3. Classic ARM64 B5 DLL compile/link PASS;
 4. PE/ARM64X checks PASS;
 5. both DLLs contain `dual-event-mux-v2`;
 6. productization ZIP is produced.
 
-If Actions fails, fix the exact compiler/linker/workflow error on this same B5 branch. Do not request a hardware micro-test.
+If the identical `cguid.h::__uuidof` C2059 appears again, remove the ARM64EC architecture-spoof shim next; do not hardware-test or create a microbranch.
 
-Only after Actions PASS should the new ZIP be used with `install_and_validate_b5.cmd`.
-
-The later strict runtime matrix still must cover:
-
-- 48k/240 output x3
-- 48k/240 full duplex x2
-- 96k/240 full duplex x2
-- 192k/240 output x2
-- 48k/96 output
-- 48k/4800 output
-- 48k/512 compatibility output
-
-Only after full matrix PASS should final REAPER validation cover audible 24-bit output plus real stereo input together.
+Only after full Actions PASS should the new ZIP be used with `install_and_validate_b5.cmd`.
