@@ -7,7 +7,7 @@
 
 namespace {
 
-constexpr char kB5MuxAdapter[] = "dual-event-mux-v3";
+constexpr char kB5MuxAdapter[] = "dual-event-mux-v4-coalesce-recovery";
 constexpr char kB5RuntimeFailsafe[] = "runtime-failsafe-v1";
 constexpr wchar_t kB5RuntimeFailureFileName[] = L"B5_RUNTIME_FAILURE.txt";
 constexpr ULONG kB5CaptureStarvationLimit = 4;
@@ -41,7 +41,9 @@ void b5_write_runtime_failure_record(
     ULONG capture_not_ready,
     ULONG capture_more_data,
     ULONG capture_phase_misses,
-    ULONG capture_packets_consumed) {
+    ULONG capture_packets_consumed,
+    ULONG render_recovered_coalesces,
+    ULONG render_dropped_blocks) {
 
     if (!self) return;
 
@@ -63,7 +65,7 @@ void b5_write_runtime_failure_record(
         "direction=%s reason=%s workerWin32=%lu emergencySilence=%s\r\n"
         "rate=%.0f frames=%ld renderSelected=%d captureSelected=%d renderRunning=%d captureRunning=%d\r\n"
         "callbacks=%ld lastCallbackIndex=%ld indexErrors=%ld renderCopyErrors=%ld captureCopyErrors=%ld\r\n"
-        "render notifications=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
+        "render notifications=%lu notificationCoalesces=%lu recoveredCoalesces=%lu droppedBlocks=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
         "capture notifications=%lu packetDiscontinuities=%lu positionRegressions=%lu writes=%lu framesCopied=%lu nonzeroSamples=%lu lastPacket=%lu\r\n"
         "captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\r\n"
         "renderMessage=%s\r\n"
@@ -86,6 +88,9 @@ void b5_write_runtime_failure_record(
         callbacks, self->last_callback_index_, index_errors,
         render_copy_errors, capture_copy_errors,
         render_stats.notifications,
+        render_stats.notification_coalesces,
+        render_recovered_coalesces,
+        render_dropped_blocks,
         render_stats.packet_discontinuities,
         render_stats.position_regressions,
         render_stats.hardware_buffer_writes,
@@ -165,7 +170,8 @@ void b5_write_runtime_failure_record(
 bool b5_mux_dispatch_callback(
     X4AsioDriverB5* self,
     ULONG master_packet,
-    long buffer_index) {
+    long buffer_index,
+    bool write_render = true) {
 
     if (self->last_callback_index_ >= 0 &&
         self->last_callback_index_ == buffer_index) {
@@ -195,7 +201,7 @@ bool b5_mux_dispatch_callback(
         self->callbacks_.bufferSwitch(buffer_index, ASIOFalse);
     }
 
-    if (self->render_selected_) {
+    if (self->render_selected_ && write_render) {
         const ULONG write_packet = master_packet + 1;
         const std::uint8_t* left = self->output_selected_[0] ?
             self->output_buffers_[0][buffer_index] : self->zero_buffer_;
@@ -212,7 +218,12 @@ bool b5_mux_dispatch_callback(
     return true;
 }
 
-bool b5_mux_render_event(X4AsioDriverB5* self, ULONG* packet_out) {
+bool b5_mux_render_event(
+    X4AsioDriverB5* self,
+    ULONG* packet_out,
+    bool* coalesced_out) {
+
+    if (coalesced_out) *coalesced_out = false;
     const auto before = self->render_.stats();
     ULONG packet = 0;
     BOOL more_data = FALSE;
@@ -228,7 +239,20 @@ bool b5_mux_render_event(X4AsioDriverB5* self, ULONG* packet_out) {
         return false;
     }
 
+    bool coalesced = false;
+    if (before.notifications > 0) {
+        const ULONG delta = packet - before.last_packet;
+        coalesced =
+            after.notification_coalesces == before.notification_coalesces + 1;
+        if ((coalesced && delta != 2) || (!coalesced && delta != 1)) {
+            return false;
+        }
+    } else if (after.notification_coalesces != before.notification_coalesces) {
+        return false;
+    }
+
     *packet_out = packet;
+    if (coalesced_out) *coalesced_out = coalesced;
     return true;
 }
 
@@ -263,6 +287,8 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     ULONG capture_more_data = 0;
     ULONG capture_phase_misses = 0;
     ULONG capture_packets_consumed = 0;
+    ULONG render_recovered_coalesces = 0;
+    ULONG render_dropped_blocks = 0;
 
     auto fail_worker = [&](const char* direction, const char* message) -> DWORD {
         // Capture the diagnostic state before the emergency silence writes can
@@ -296,7 +322,9 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             capture_not_ready,
             capture_more_data,
             capture_phase_misses,
-            capture_packets_consumed);
+            capture_packets_consumed,
+            render_recovered_coalesces,
+            render_dropped_blocks);
 
         std::printf(
             "B5 worker %s failed: %s emergencySilence=%s log=%%TEMP%%\\B5_RUNTIME_FAILURE.txt\n",
@@ -306,13 +334,52 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
         return ERROR_GEN_FAILURE;
     };
 
+    auto recover_one_render_coalesce = [&](ULONG current_packet, bool zero_input) -> bool {
+        if (current_packet == 0) return false;
+        const ULONG missed_packet = current_packet - 1;
+        const long missed_index = static_cast<long>(
+            (missed_packet + 1) % kNotificationCount);
+
+        if (zero_input) {
+            const SIZE_T bytes =
+                static_cast<SIZE_T>(self->buffer_frames_) * kBytesPerAsioSample;
+            ZeroMemory(self->input_buffers_[0][missed_index], bytes);
+            ZeroMemory(self->input_buffers_[1][missed_index], bytes);
+        }
+
+        // The hardware packet corresponding to the missed notification has
+        // already completed. Invoke the missing ASIO callback only to preserve
+        // host double-buffer alternation and sample timeline, and deliberately
+        // discard the output it produces. The following current-packet callback
+        // writes the next still-future WaveRT packet normally.
+        if (!b5_mux_dispatch_callback(
+                self, missed_packet, missed_index, false)) {
+            return false;
+        }
+
+        ++render_recovered_coalesces;
+        ++render_dropped_blocks;
+
+        char message[256]{};
+        sprintf_s(
+            message, sizeof(message),
+            "B5 RENDER COALESCE RECOVERED previous=%lu missed=%lu current=%lu droppedBlocks=%lu\n",
+            current_packet - 2, missed_packet, current_packet,
+            render_dropped_blocks);
+        OutputDebugStringA(message);
+        std::printf("%s", message);
+        return true;
+    };
+
     if (self->render_selected_ && self->capture_selected_) {
         // Render is the ASIO callback clock. Capture is an independent producer.
         // Do not hold a render callback waiting for an exact capture packet: at
         // 96 kHz the two WaveRT notification streams can have a stable phase
         // offset even though both packet sequences are continuous. Capture is
         // staged independently and the oldest unconsumed packet is presented at
-        // the next render callback. Actual packet discontinuity remains fatal.
+        // the next render callback. A measured single collapsed render event is
+        // recovered as one explicit ASIO xrun block; larger/invalid packet jumps
+        // and every capture packet discontinuity remain fatal.
         HANDLE handles[3] = {
             self->stop_event_,
             self->capture_.notification_event(),
@@ -476,8 +543,16 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             }
 
             ULONG render_packet = 0;
-            if (!b5_mux_render_event(self, &render_packet)) {
+            bool render_coalesced = false;
+            if (!b5_mux_render_event(
+                    self, &render_packet, &render_coalesced)) {
                 return fail_worker("RENDER", self->render_.last_message());
+            }
+
+            if (render_coalesced &&
+                !recover_one_render_coalesce(render_packet, true)) {
+                return fail_worker(
+                    "DUPLEX", "render coalesce catch-up callback failed");
             }
 
             const long buffer_index = static_cast<long>(
@@ -508,9 +583,18 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
             }
 
             ULONG render_packet = 0;
-            if (!b5_mux_render_event(self, &render_packet)) {
+            bool render_coalesced = false;
+            if (!b5_mux_render_event(
+                    self, &render_packet, &render_coalesced)) {
                 return fail_worker("RENDER", self->render_.last_message());
             }
+
+            if (render_coalesced &&
+                !recover_one_render_coalesce(render_packet, false)) {
+                return fail_worker(
+                    "RENDER", "render coalesce catch-up callback failed");
+            }
+
             const long buffer_index = static_cast<long>(
                 (render_packet + 1) % kNotificationCount);
             if (!b5_mux_dispatch_callback(self, render_packet, buffer_index)) {
@@ -569,9 +653,11 @@ DWORD b5_mux_worker_loop(X4AsioDriverB5* self) {
     }
 
     std::printf(
-        "B5 worker EXIT adapter=%s thread=%lu captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\n",
-        kB5MuxAdapter, GetCurrentThreadId(), capture_not_ready,
-        capture_more_data, capture_phase_misses, capture_packets_consumed);
+        "B5 worker EXIT adapter=%s thread=%lu renderCoalesces=%lu renderDroppedBlocks=%lu captureNotReady=%lu captureMoreData=%lu capturePhaseMisses=%lu captureConsumed=%lu\n",
+        kB5MuxAdapter, GetCurrentThreadId(),
+        render_recovered_coalesces, render_dropped_blocks,
+        capture_not_ready, capture_more_data,
+        capture_phase_misses, capture_packets_consumed);
     return ERROR_SUCCESS;
 }
 
