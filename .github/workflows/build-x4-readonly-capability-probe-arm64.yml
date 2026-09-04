@@ -27,29 +27,34 @@ jobs:
         shell: pwsh
         run: |
           cmake --build build/x4-control-readonly-probe --config Release --target x4-control-readonly-probe --parallel
+          cmake --build build/x4-control-readonly-probe --config Release --target x4-mixer-readonly-drilldown --parallel
 
       - name: Verify ARM64 PE and stage
         shell: pwsh
         run: |
-          $exe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
-          if (-not (Test-Path $exe)) {
-            throw "x4-control-readonly-probe.exe was not produced"
-          }
+          $capabilityExe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-control-readonly-probe.exe"
+          $mixerExe = Join-Path $PWD "build/x4-control-readonly-probe/Release/x4-mixer-readonly-drilldown.exe"
 
-          $bytes = [System.IO.File]::ReadAllBytes($exe)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0xAA64) {
-            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          foreach ($exe in @($capabilityExe, $mixerExe)) {
+            if (-not (Test-Path $exe)) {
+              throw "$exe was not produced"
+            }
+            $bytes = [System.IO.File]::ReadAllBytes($exe)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Expected ARM64 PE machine 0xAA64 for {0}, got 0x{1:X4}" -f $exe, $machine)
+            }
+            "ARM64 PE verified: $exe"
+            "SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
           }
 
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item $exe dist/x4-control-readonly-probe.exe
+          Copy-Item $capabilityExe dist/x4-control-readonly-probe.exe
+          Copy-Item $mixerExe dist/x4-mixer-readonly-drilldown.exe
           Copy-Item src/x4-control-readonly-probe/RUN-READONLY-CAPABILITY-PROBE.cmd dist/RUN-READONLY-CAPABILITY-PROBE.cmd
+          Copy-Item src/x4-control-readonly-probe/RUN-MIXER-READONLY-DRILLDOWN.cmd dist/RUN-MIXER-READONLY-DRILLDOWN.cmd
           Copy-Item src/x4-control-readonly-probe/README.md dist/README.md
-
-          "ARM64 PE verified: 0xAA64"
-          "EXE SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
 
       - name: Upload probe artifact
         uses: actions/upload-artifact@v4
