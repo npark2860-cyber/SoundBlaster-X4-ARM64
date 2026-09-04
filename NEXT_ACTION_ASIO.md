@@ -20,7 +20,7 @@ Immutable safety:
 
 # Current B5 source
 
-`exp/windows-arm64-asio-b5-capability-productization@127ca482ef18575ce4dc69d03d41a5a01287e992`
+`exp/windows-arm64-asio-b5-capability-productization@1ba2faabb922be0f002d698019c7be6e602ff3bc`
 
 Runtime/build marker:
 
@@ -30,7 +30,7 @@ Runtime/build marker:
 
 # Latest returned runtime
 
-Report generated `2026-09-04 12:37:34.26`.
+Product validation generated `2026-09-04 13:00:02.92` still showed:
 
 PASS:
 
@@ -41,97 +41,100 @@ PASS:
 - 48k/240 full duplex x2
 - 96k/240 full duplex x2
 
-96k duplex now stops cleanly with no strict packet/index/copy errors. Capture still trails render (`capturePhaseMisses=27/23`), so exact duplex cadence is not yet closed, but mux-v2's false synchronization failure is fixed.
-
-New runtime failure:
+and the known 192k/240 failure:
 
 `B5 RENDER BUFFER_WITH_NOTIFICATION FAILED Win32=87 requested=2880`
 
-at 192k/240 output during `createBuffers()`, before worker creation or KSSTATE_RUN.
+A dedicated geometry probe report generated `2026-09-04 13:05:25.43` then measured the exact 192 kHz boundary.
 
-This moves the immediate runtime blocker from scheduling to 192 kHz WaveRT buffer geometry.
+192 kHz / stereo / 24-bit / NotificationCount=2:
 
-See:
+- 48..336 frames per notification: FAIL Win32=87
+- 384 frames / 2.00 ms: first PASS
+- every tested 432..960 frame candidate: PASS
+- accepted candidates returned `ActualBufferSize == RequestedBufferSize`
 
-`DEBUG_HISTORY_20260904_ASIO_B5_MUX_V3_96K_PASS_192K_GEOMETRY_PROBE.md`
-
----
-
-# Measurement tool
-
-ARM64EC target:
-
-`x4-asio-stage-b5-192k-geometry-probe`
-
-Packaged runner:
-
-`probe_b5_192k_geometry.cmd`
-
-Behavior:
-
-- 192 kHz / stereo / 24-bit / Render Pin 1
-- never enters KSSTATE_RUN
-- checks local/global FREE before every `KsCreatePin`
-- scans 48..960 frames per notification in 48-frame steps
-- equivalent to 0.25..5.0 ms per notification at 192 kHz
-- NotificationCount=2
-- records requested bytes, PASS/FAIL, Win32 error and `ActualBufferSize`
-- closes each pin and requires the gate to return FREE before the next candidate
-
-The main productization workflow builds and packages this probe but does not execute it automatically.
-
----
-
-# Latest build status — geometry probe compile fix
-
-The first workflow build containing the new geometry probe compiled and linked all existing ARM64EC B5 targets, then failed only in `geometry_probe_b5_arm64ec.cpp` with:
-
-`error C3861: '_countof': identifier not found`
-
-The failing call was:
-
-`find_x4_wave_path(path, _countof(path))`
-
-This was isolated to the new helper and has no runtime meaning.
-
-Fixed on the same B5 branch by replacing the macro dependency with:
-
-`constexpr size_t path_chars = sizeof(path) / sizeof(path[0]);`
-
-and passing `path_chars`.
+Therefore the first-release blocker is no longer unknown.
 
 See:
 
-`DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_PROBE_COMPILE_FIX.md`
+`DEBUG_HISTORY_20260904_ASIO_B5_192K_GEOMETRY_MEASURED_384_CONTRACT.md`
 
-No WaveRT runtime logic, mux-v3 behavior, BUSY gate, ownership rule, product contract, or validated B4D source changed.
+---
+
+# Implemented first-release contract
+
+48/96 kHz:
+
+- min 96
+- max 4800
+- preferred 240
+- granularity 48
+
+192 kHz:
+
+- min 384
+- max 4800
+- preferred 384
+- granularity 48
+
+512 remains accepted as the B4D-era compatibility exception.
+
+192 kHz still exposes zero inputs.
+
+Implementation changes are intentionally narrow:
+
+- `getBufferSize()` is sample-rate aware
+- `getLatencies()` uses the selected-rate preferred value before buffers are created
+- `createBuffers()` rejects sub-384 sizes at 192 kHz before WaveRT pin preparation
+- product validation checks the rate-specific public buffer contract
+- 192 kHz validation now uses 384 frames
+
+No WaveRT engine, mux-v3, BUSY gate, joined-worker safety, or validated B4D core was changed.
+
+---
+
+# Remaining 96 kHz observation
+
+Mux-v3 fixed the previous false exact-phase failure and 96k/240 duplex passes lifecycle validation.
+
+However capture still trails render and prior reports showed roughly 23..27 `capturePhaseMisses` per ~278 callbacks.
+
+Do not reopen this during the 192 kHz validation unless the new full matrix exposes a concrete strict failure. Treat it as a separate capture cadence/latency quality follow-up.
 
 ---
 
 # Immediate action
 
-Re-run manual workflow:
+Run manual workflow:
 
 `Build ASIO B5 Productization`
 
 Required build outcome:
 
-1. ARM64EC B5 DLL + normal helpers compile/link PASS;
-2. `x4-asio-stage-b5-192k-geometry-probe.exe` compile/link PASS;
-3. Classic ARM64 DLL compile/link PASS;
-4. PE/ARM64X checks PASS;
-5. both B5 DLLs contain `dual-event-mux-v3`;
-6. ZIP is produced with `probe_b5_192k_geometry.cmd`.
+1. ARM64EC B5 DLL + helpers compile/link PASS;
+2. Classic ARM64 B5 DLL compile/link PASS;
+3. PE/ARM64X checks PASS;
+4. both B5 DLLs contain `dual-event-mux-v3`;
+5. productization ZIP produced.
 
 After build PASS:
 
 1. download the new ZIP;
-2. close REAPER/media players/Creative App playback and any other X4 user;
-3. run `probe_b5_192k_geometry.cmd` once;
-4. return `B5_192K_GEOMETRY_REPORT.txt`.
+2. close REAPER/media players/Creative App playback and other X4 users as before;
+3. run `install_and_validate_b5.cmd` once;
+4. return the new `B5_PRODUCT_VALIDATION_REPORT.txt`.
 
-Do not rerun the full product matrix first; the known blocker is already the 192 kHz geometry allocation.
+Expected matrix:
 
-Do not patch product buffer geometry until the probe identifies the first accepted 192 kHz notification size.
+- 48k/240 output x3
+- 48k/240 full duplex x2
+- 96k/240 full duplex x2
+- 192k/384 output x2
+- 48k/96 output x1
+- 48k/4800 output x1
+- 48k/512 compatibility output x1
 
-If the geometry probe reports BUSY/INDETERMINATE or the pin does not return FREE after closing a candidate, stop instead of retrying repeatedly.
+The report must show the 192 kHz buffer contract as `min=384 max=4800 preferred=384 granularity=48` and both 192k/384 output cycles must stop cleanly.
+
+Only after the full matrix passes should final REAPER validation cover audible 24-bit output plus real stereo input together.
