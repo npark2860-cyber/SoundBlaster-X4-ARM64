@@ -8,144 +8,112 @@ Repository:
 
 `npark2860-cyber/SoundBlaster-X4-ARM64`
 
-Current controller branch:
+Controller branch:
 
 `exp/windows-arm64-x4-native-controller`
 
-At the start of the next chat, verify the actual branch HEAD on GitHub before doing anything else.
+Always verify the actual branch HEAD before continuing. Do not reconstruct state from conversation memory when repository documents are available.
 
-Do not reconstruct state from conversation memory when repository documents can be checked.
-
-## Read order for the next tab
+## Read order
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
-2. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
-3. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
-4. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-5. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
-6. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
-7. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-8. `X4_CONTROL_MAP.md`
-9. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-10. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-11. older histories only when needed
+2. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+3. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+4. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+5. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+6. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
+7. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
+8. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+9. `X4_CONTROL_MAP.md`
+10. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
+11. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
 ## Scope boundary
 
 This branch is for X4 Windows ARM64 native controller / driver-path analysis.
 
-Keep it separate from B5 ASIO work.
+Keep it separate from B5 ASIO.
 
-Do not modify B5 ASIO source, WaveRT engine, mux, runtime failsafe, control-panel behavior, or unrelated paths from this controller branch.
+Do not modify B5 ASIO source, WaveRT engine, mux, failsafe or control-panel behavior from this branch.
 
-The current Windows ARM64 machine uses the Microsoft USB Audio 2.0 path rather than the complete official Creative filter/APO stack. That fact must be considered when interpreting missing Creative features.
+The current ARM64 Windows machine uses the Microsoft USB Audio 2.0 path and does not have the complete configured Creative APO/filter stack. Missing features must be interpreted with that environment in mind.
 
-## CTCDC session — confirmed operating condition
+## Four-layer architecture rule
+
+Classify every feature explicitly:
+
+1. X4 firmware / CTCDC raw control
+2. Windows Core Audio endpoint/property control
+3. Creative filter/APO DSP processing
+4. Creative App/profile orchestration
+
+Do not collapse these layers into one generic “Creative command” path.
+
+## CTCDC session — confirmed
 
 X4 control interface:
 
 `USB\VID_041E&PID_3278&MI_01`
 
-Current tested port:
+Validated session:
 
-`COM3`
-
-Validated session initialization:
-
+- tested COM port: `COM3`
 - event mask `0x05`
 - 115200 / 8N1
 - zero COM timeouts
 - `PurgeComm(0x0F)`
 - `SETDTR`
 
-Fast-path session gate:
+Fast gate:
 
 - `5A 03 00` -> `5A 03 02 3B 00`
-- maximum payload = 59
-- firmware query -> `1.9.251008.0930`
-- button query -> `5A 26 06 05 00 01 00 1E 00`
+- maximum payload 59
+- firmware `1.9.251008.0930`
 
-### Creative App conflict
+Creative App must be fully closed for independent CTCDC runtime tests; otherwise a reproducible ownership/session conflict can block the independent path.
 
-A reproducible runtime condition was discovered:
+## Direct Mode — hardware-confirmed firmware path
 
-- Creative App running: the independent CTCDC path can fail at the first readiness query.
-- Creative App fully closed: the same independent path works again.
+- ON `5A 39 03 00 05 01`
+- OFF `5A 39 03 00 05 00`
 
-Treat this as an ownership/session conflict condition. Do not change protocol bytes to compensate.
+Physical Windows/X4 state change was confirmed previously.
 
-Independent runtime tests must be performed with Creative App fully closed.
+Do not infer that the separate APO DirectMode property is equivalent to this firmware command without product-specific evidence.
 
-## Direct Mode — hardware-confirmed
+## Malcolm runtime result
 
-Known state-changing frames:
+### PlaybackManager `0x96`
 
-- ON: `5A 39 03 00 05 01`
-- OFF: `5A 39 03 00 05 00`
+Only the Graphic EQ block responded through the tested raw route:
 
-Windows hardware state change has been physically confirmed previously.
+- param 9 enable = 1.0
+- param 10 preamp = 0.0
+- params 11..20 band values = `3, 2, 0, -2, 0, 1, 2, 3, 3, 3.5`
 
-Every new state-changing command still requires separate physical confirmation.
+These matched the supplied Music EQ preset.
 
-## Read-only capability-map result
+### Feature mask
 
-The 83-query capability probe completed the entire query loop without losing the CTCDC session.
-
-`83 / 83` means all queries were issued/completed by the probe loop, not that all received data replies.
-
-### Malcolm PlaybackManager (`0x96`)
-
-Only the Graphic EQ block responded:
-
-- param 9: EQ enable = `1.0`
-- param 10: preamp = `0.0`
-- params 11..20: 10-band GEQ values
-
-Observed band values:
-
-`3, 2, 0, -2, 0, 1, 2, 3, 3, 3.5`
-
-These match the supplied SB1815 Music EQ preset.
-
-Surround, Dialog Plus, Smart Volume, Crystalizer and Bass parameters did not return data responses through this raw Malcolm path.
-
-### VoiceInputManager (`0x95`)
-
-Params `0..45` all returned no response.
-
-Do **not** interpret this as proof that X4 lacks CrystalVoice globally.
-
-The correct interpretation is that this raw VoiceInputManager route is not exposed in the tested firmware/session, while the ARM64 environment also lacks the complete official Creative driver/filter/APO stack.
-
-### Direct generic commands
-
-- GraphicEqualizerControl `0x44`: ACK `0x81 NotSupported`
-- SoundModeControl `0xA7`: ACK `0x81 NotSupported`
-
-Do not use those generic enum entries as X4 backends.
-
-## Malcolm sub-feature support — runtime-confirmed
-
-`5A 10 00`
-
-Response:
-
-`5A 10 08 40 00 00 00 00 00 00 00`
-
-Parsed:
-
-- FeatureMask = `0x00000040`
-- UnavailableMask = `0x00000000`
+`5A 10 00` -> feature mask `0x00000040`, unavailable mask 0.
 
 Recovered mapping identifies `0x40` as GraphicEQ.
 
-This is consistent with the runtime where only the PlaybackManager GEQ block responded. Do not broaden this into a claim that the entire product lacks other Creative software/driver-backed features.
+### VoiceInputManager `0x95`
 
-## Mixer AudioControl — runtime-confirmed firmware discovery
+Params 0..45 returned no response in the tested CTCDC session.
 
-### `0x21` descriptors
+Critical correction from later APO static analysis:
 
-Runtime returned 11 controls:
+**this does not prove CrystalVoice is unsupported.**
+
+The official Windows Creative stack has a separate Audio System Effects property-store + APO implementation for AEC, Noise Reduction, MicBeam, SVM, VoiceFX and related processing.
+
+Do not repeat blind raw `0x95` probing.
+
+## AudioControl firmware discovery
+
+Runtime `0x21` returned:
 
 | Index | Type |
 |---:|---|
@@ -161,258 +129,222 @@ Runtime returned 11 controls:
 | 9 | SPDIF Input |
 | 10 | Automatic Gain Control |
 
-Indices 0..9 advertise volume + mute. AGC advertises mute but no volume.
+`0x22` returned ranges for 0..9.
 
-### `0x22` ranges
+`0x24` Mute GET succeeded for 0..10.
 
-RangeCount = 10, covering indices `0..9`.
+The exact raw UInt16 engineering-unit conversion for `0x22/0x23` remains unresolved. Do not hard-code `/256` as confirmed.
 
-The exact CDC raw `UInt16` engineering-unit conversion is still not statically proven. Do not hard-code `/256` as confirmed yet.
-
-### `0x24` Mute GET
-
-All 11 indices returned valid current mute states.
-
-Observed muted controls in the capture:
-
-- index 3 / Mic Monitoring = `1`
-- index 10 / Automatic Gain Control = `1`
-
-All other indices were `0` in that capture.
-
-## `0x23` AudioLevel — official static path recovered
+## `0x23` AudioLevel — static path resolved
 
 Full trace:
 
 `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
 
-### Request
-
-`RawCmdAudioLevelGet`, `Pack=1`:
-
-- `Operation : byte`
-- `AudioControlIndex : byte`
-
-GET frame:
+Exact GET:
 
 `5A 23 02 01 <index>`
 
-### Managed response
+Managed response `RawResAudioLevelGet`, Pack=1:
 
-`RawResAudioLevelGet`, `Pack=1`:
+- AudioControlIndex byte
+- CurValue UInt16
 
-- `AudioControlIndex : byte`
-- `CurValue : UInt16`
+Managed payload size = 3 bytes.
 
-Managed payload size is exactly **3 bytes**.
+The runtime fourth trailing `0x03` is not a managed struct member/padding and is ignored by the official managed decode. Its firmware meaning remains unresolved.
 
-The successful runtime responses for raw index 0/1 contained a fourth trailing `0x03`, but that byte is:
+Creative Platform creates `0x23` command keys only for Game/Voice indices selected from `GameAudioLevel (19)` / `ChatAudioLevel (18)` descriptors.
 
-- not a response-structure member;
-- not managed padding;
-- ignored by the official managed decode.
-
-Its firmware semantic meaning remains unresolved. Do not assign a channel-mask or similar meaning without direct evidence.
-
-### Official scope of `0x23`
-
-Creative Platform creates `RawCmdAudioLevelGet/Set` keys only for:
-
-- `CDCGameVoice.GameIndex`
-- `CDCGameVoice.VoiceIndex`
-
-Those indices are selected from descriptor types:
-
-- `GameAudioLevel = 19`
-- `ChatAudioLevel = 18`
-
-Incoming level callbacks are likewise matched only against those stored Game/Voice indices.
-
-The runtime X4 descriptor list contains neither type 18 nor type 19.
+The X4 runtime descriptor set contains neither type 18 nor 19.
 
 Therefore:
 
-- generic per-index `0x23` reads are not the official Windows Speaker/Input/Monitoring mixer model;
-- raw index 2..9 `GeneralFailure` is not proof of missing volume capability;
+- generic 0..9 raw `0x23` probing is not the official normal mixer model;
+- idx2..9 `GeneralFailure` is not missing-volume proof;
 - do not repeat generic `0x23` probing;
 - do not issue `0x23` SET.
 
-## General Windows Mixer path — native implementation recovered
+## Normal Windows mixer — ARM64 implementation path recovered
 
 Full traces:
 
 - `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
 - `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
 
-Recovered chain:
+Original chain:
 
 `Creative.Platform.Mixer.dll`
--> `MalLgcy.dll!CSCT*`
--> `CTAudEp.dll!CT*`
+-> x86 `MalLgcy.dll`
+-> x86 `CTAudEp.dll`
 -> Microsoft Core Audio / DeviceTopology
 
-Supplied binaries:
+MalLgcy is a thin forwarder. CTAudEp's relevant mixer functions resolve to public Windows COM interfaces.
 
-- `MalLgcy.dll` SHA-256 `bf2ba6d85fa1cdf20a2fa866d153cefa1e5e7f9af87107d83963ed393e4591aa`, x86 PE32
-- `CTAudEp.dll` SHA-256 `76adb6b105757849eb61c69842db7a4f46ae01251c0b1791fe7d248a31b469fa`, x86 PE32
+Direct ARM64 targets:
 
-### MalLgcy role
-
-The relevant `CSCT*` functions are thin wrappers that pass the original arguments unchanged to matching `CTAudEp.dll!CT*` functions.
-
-No scalar/dB/CDC fixed-point conversion occurs in MalLgcy.
-
-### CTAudEp endpoint path
-
-Endpoint master/channel volume is standard `IAudioEndpointVolume`:
-
-1. `CoCreateInstance(CLSID_MMDeviceEnumerator, ..., IID_IMMDeviceEnumerator)`;
-2. `IMMDeviceEnumerator::GetDevice(endpointId)`;
-3. `IMMDevice::Activate(IID_IAudioEndpointVolume, ...)`;
-4. use scalar or dB endpoint methods according to `fScalar`.
-
-ARM64 can implement this directly without Creative DLLs.
-
-### CTAudEp monitoring path
-
-Monitoring uses public DeviceTopology:
-
-1. activate `IID_IDeviceTopology` on the endpoint;
-2. get connector 0;
-3. follow `IConnector::GetConnectedTo`;
-4. QueryInterface for `IPart`;
-5. traverse `IPart::EnumPartsIncoming`;
-6. activate `IAudioVolumeLevel` and/or `IAudioMute` on relevant parts.
-
-Monitoring volume/range/channel-count use `IAudioVolumeLevel`; mute uses `IAudioMute`.
-
-### Mic Boost
-
-CTAudEp locates `KSNODETYPE_VOLUME` and activates `IAudioVolumeLevel`.
-
-The managed Creative Mic Boost path uses `fScalar=false`, so its normal native value is dB.
-
-### Mic AGC
-
-CTAudEp locates `KSNODETYPE_AGC` and activates `IAudioAutoGainControl`.
-
-State maps directly to `GetEnabled` / `SetEnabled`.
-
-### CTAudEp dB/scalar helper
-
-For topology `IAudioVolumeLevel`, CTAudEp performs float dB/scalar conversion itself.
-
-Base mapping:
-
-`scalar = 10 ^ ((levelDB - maxDB) / 20)`
-
-The code contains a low-end 6 dB interpolation branch when the range width is below 40 dB.
-
-This conversion applies to the Windows DeviceTopology float path only. It does **not** prove the encoding of CDC `0x22/0x23 UInt16` values.
-
-### ARM64 architecture conclusion
-
-The ordinary Windows mixer subset does **not** require porting/loading the x86 MalLgcy/CTAudEp binaries.
-
-Direct ARM64 mapping:
-
-| Function | ARM64 Windows API |
+| Function | Public Windows API |
 |---|---|
-| Endpoint master volume | `IAudioEndpointVolume` |
-| Endpoint channel volume | `IAudioEndpointVolume` channel APIs |
-| Endpoint range | `IAudioEndpointVolume::GetVolumeRange` |
+| Endpoint master/channel | `IAudioEndpointVolume` |
 | Monitoring volume | `IDeviceTopology/IPart` + `IAudioVolumeLevel` |
 | Monitoring mute | `IDeviceTopology/IPart` + `IAudioMute` |
 | Mic Boost | `KSNODETYPE_VOLUME` + `IAudioVolumeLevel` |
 | Mic AGC | `KSNODETYPE_AGC` + `IAudioAutoGainControl` |
 
-`CTAudEp.dll` imports `DeviceIoControl` for other functionality, but no Creative-only kernel IOCTL requirement was found in the mixer functions traced above.
+The supplied x86 MalLgcy/CTAudEp DLLs do not need to become ARM64 runtime dependencies for this mixer subset.
 
-## Driver/APO architecture rule
+CTAudEp's topology dB/scalar helper is a separate float path and is not proof of the CDC UInt16 format.
 
-Controller implementation must classify each feature into one of four backend classes:
+## CrystalVoice / non-EQ Acoustic Engine — backend recovered
 
-1. X4 firmware / CTCDC raw control
-2. Windows Core Audio endpoint/property control
-3. Creative filter/APO/driver-side processing
-4. Creative App/profile orchestration
+Full trace:
 
-Current confirmed examples:
+`DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
 
-- Direct Mode -> CTCDC firmware
-- Graphic EQ -> CTCDC PlaybackManager GEQ block
-- Mixer descriptor/range/mute discovery -> CTCDC `0x21/0x22/0x24`
-- CDC `0x23` official Platform path -> Game/Voice feature indices, not generic Windows mixer
-- endpoint/channel/monitoring volume -> public Core Audio / DeviceTopology
-- Mic Boost / Mic AGC -> public DeviceTopology KS-node interfaces
-- CrystalVoice -> backend not yet resolved; raw `0x95` no-response is not global unsupported proof
-- Acoustic Engine non-EQ controls -> backend not yet resolved
-- Dolby Digital Live / encoder -> driver/software path remains relevant
+Supplied binaries:
 
-## Files / probe state
+- `Creative.Platform.CoreAudio.dll`
+  - SHA-256 `189ee6750a7e70f24421f1e2100fa88847878456f11233e28ed2fa0a6d1d4823`
+- `CTUSBAPO64.dll`
+  - SHA-256 `fa23a53861087df19487497c54067128f61a266cce2eae000f1a40b8752a17d3`
+- `CTUSBfilt64.sys`
+  - SHA-256 `bc0140f821b4d2f83405a6e89b135f98b0df690b6fdefbab47c47d7ae8856105`
 
-Probe directory:
+### Recovered official control plane
 
-`src/x4-control-readonly-probe`
+`Creative App / Platform`
+-> `ApoDeviceRepoKeyFactory`
+-> `PropStoreRepository`
+-> `IAudioSystemEffectsPropertyStore::OpenUserPropertyStore`
+-> `IPropertyStore::GetValue / SetValue`
+-> Windows Audio System Effects notification path
+-> `CTUSBAPO64.dll` DSP modules
 
-Current diagnostics include:
+This is direct static evidence from the exact Platform and APO binaries.
 
-- `x4-control-readonly-probe.exe`
-- `x4-mixer-readonly-drilldown.exe`
-- one-click CMD launchers
+### CoreAudio role
 
-Manual workflow:
+`Creative.Platform.CoreAudio.dll` is a managed COM interop layer containing:
 
-`Build X4 Read-Only Capability Probe ARM64`
+- normal Core Audio/DeviceTopology interfaces;
+- `IAudioSystemEffectsPropertyStore`;
+- `IAudioSystemEffectsPropertyChangeNotificationClient`;
+- default/user/volatile FX property-store operations.
 
-No new runtime probe is required for the recovered AudioLevel/MalLgcy/CTAudEp architecture.
+Recovered `IAudioSystemEffectsPropertyStore` GUID:
 
-## Next engineering action
+`302AE7F9-D7E0-43E4-971B-1F8293613D2A`
+
+### Platform APO repository
+
+Exact `Creative.Platform.Devices.dll` contains:
+
+- `ApoDeviceRepoKeyFactory`
+- `PropStoreRepository`
+- `ApoDeviceRepositoryInitializer`
+
+`ApoDeviceRepoKeyFactory` references approximately 158 Creative `CTPKEY_*` values.
+
+`PropStoreRepository` directly calls:
+
+- `OpenUserPropertyStore`
+- `IPropertyStore::GetValue`
+- `IPropertyStore::SetValue`
+- `RegisterPropertyChangeNotification`
+
+### Selected exact feature keys
+
+- Crystalizer Enable `{3cd83c04-868f-4f08-8d75-b4625ffe3b31}, PID 0`
+- Crystalizer Level `{0f03f0bb-72c7-4ec1-8422-7b8d7410694a}, PID 0`
+- SVM Enable `{9ad782d7-f46e-465c-8df5-3cda75424987}, PID 0`
+- AEC Enable `{35f00393-1adf-43ce-84cb-7a926ac012b6}, PID 0`
+- Noise Reduction Enable `{40d0d021-20bd-4d15-a93c-1dbe8922c642}, PID 1`
+- MicBeam Plus Enable `{40d0d021-20bd-4d15-a93c-1dbe8922c642}, PID 0`
+- TD NR family `{e370f545-381e-4961-9a94-7f97aafa77d7}, PID 0..5`
+- Graphic EQ Enable `{9a9d0cb2-4dc9-494c-8210-9848ae1aa629}, PID 0`
+- APO DirectMode Enable `{f3eaf467-52bd-4853-baa0-82d23a8759f5}, PID 0`
+
+The same selected GUIDs are present in the supplied `CTUSBAPO64.dll`, tying the official Platform property repository to the native APO.
+
+### Native APO DSP modules
+
+`CTUSBAPO64.dll` contains concrete modules for:
+
+- Crystalizer / THX Crystalizer
+- Bass Management
+- SVM
+- Noise Reduction / TD Noise Reduction
+- AEC
+- MicBeam / MicBeamPlus
+- VoiceFX
+- Mic Signal Conditioning
+- Graphic EQ
+
+The APO uses modern System Effects 3 initialization and endpoint/system-effects property notifications.
+
+Therefore the actual effect algorithms are in the user-mode Creative APO processing layer, not in the tested CTCDC `0x95` route.
+
+### CTUSBfilt64 role
+
+`CTUSBfilt64.sys` is a small supporting x64 WDM audio filter/forwarder with normal AddDevice/IRP behavior and a DRM/content-forwarding path.
+
+No high-level CrystalVoice/Acoustic property repository or effect DSP implementation was recovered there.
+
+Do not call it useless; it has driver-stack behavior. The narrower conclusion is that the high-level DSP/property consumer is the APO.
+
+## ARM64 consequence for Creative effects
+
+The controller/UI side can reproduce Windows Audio System Effects property-store reads/writes in native ARM64 code once the exact X4 endpoint key family and registration are known.
+
+But writing properties alone does not reproduce the DSP.
+
+The supplied `CTUSBAPO64.dll` is x86-64 and contains the actual effect implementation. The current ARM64 environment does not have the fully configured Creative APO/filter stack.
+
+Full CrystalVoice/Acoustic restoration therefore requires:
+
+1. correct endpoint FX registration/property stores;
+2. a compatible APO processing layer;
+3. required native dependencies/assets.
+
+Static analysis has **not** yet established whether Windows ARM64 can host this exact x86-64 APO inside the audio engine. Do not assume yes or no without dedicated evidence.
+
+## Current next actions
 
 Do **not** create another broad runtime probe.
 
-### Priority 1 — CDC Game/Voice raw engineering unit
+### Priority 1 — X4-specific APO selection
 
-Recover the exact official consumer-side conversion for CDC raw `UInt16` level/range values.
+Statically trace:
 
-Known exclusions:
+- `ApoDeviceRepositoryInitializer`;
+- product/endpoint support predicates/enrichers;
+- which legacy/current `CTPKEY_*` family SB1815 selects;
+- exact `PROPVARIANT` types/ranges/defaults for X4-relevant keys;
+- SFX/MFX/EFX/AEC endpoint registration/INF properties;
+- APO native dependencies/model files used by the relevant X4 modules.
 
-- no conversion in `RawResAudioLevelGet`;
-- no conversion in `AudioControlLevelRange`;
-- no conversion in `CDCGameVoiceFeature` inside `Creative.Platform.Devices.dll`;
-- no CDC raw conversion in MalLgcy;
-- CTAudEp's float dB/scalar helper is a separate DeviceTopology path.
+Only after this is narrowed should a targeted read-only endpoint FX property-store enumeration be considered.
 
-Observed values remain numerically compatible with signed Q8.8, but `/256` is not confirmed.
+### Priority 2 — ARM64 APO hosting/registration feasibility
 
-Trace Creative App/UI and other Platform assemblies that actually consume `CDCGameVoice`, `GameAudioLevel`, `ChatAudioLevel`, or those raw range/current values.
+Determine whether the exact x64 Creative APO can be registered/hosted on this Windows ARM64 audio path or whether an ARM64 replacement processing layer is required.
 
-### Priority 2 — CrystalVoice / Acoustic Engine backend
+Do not infer from normal application x64 emulation; audio-engine APO hosting must be checked specifically.
 
-Continue static tracing through:
+### Priority 3 — remaining CDC Game/Voice unit conversion
 
-- `Creative.Platform.CoreAudio.dll`
-- other App/Platform assemblies
-- `CTUSBAPO64.dll`
-- `CTUSBfilt64.sys`
-- Creative KS/property GUID paths already identified
+Continue only by finding a concrete App/UI consumer of `CDCGameVoice` raw UInt16 values.
 
-Do not repeat blind raw `0x95` probing.
+Do not search MalLgcy/CTAudEp or the APO property path for this conversion again unless a direct reference proves relevance.
 
-### Implementation gate
-
-The ordinary mixer path is now understood well enough for a future native ARM64 Core Audio implementation.
-
-When implementation is started, begin with narrowly scoped read-only endpoint/topology discovery and keep setters gated behind separate validation. Do not interpret this handoff as authorization to issue new state-changing commands automatically.
-
-## Safety / workflow rules
+## Runtime safety rules
 
 - GitHub is source of truth.
-- Verify branch HEAD before starting.
 - Creative App closed for independent CTCDC runtime.
-- One variable at a time in runtime tests.
-- Read-only until a state-changing command has exact evidence.
-- Every new state-changing hardware command requires physical X4 confirmation.
+- One variable at a time.
+- Read-only until a state-changing command/path is exactly justified.
+- Every new state-changing hardware command needs physical X4 confirmation.
 - `WriteFile` success alone is not hardware validation.
-- No unrelated modifications.
-- No ASIO modifications from this controller branch.
+- No blind raw `0x95` probing.
+- No unrelated changes.
+- No B5 ASIO changes from this branch.
