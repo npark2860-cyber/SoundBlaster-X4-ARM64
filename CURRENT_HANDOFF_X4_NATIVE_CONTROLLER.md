@@ -20,13 +20,14 @@ Do not reconstruct state from conversation memory when repository documents can 
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
 2. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
-3. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
-4. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
-5. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-6. `X4_CONTROL_MAP.md`
-7. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-8. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-9. older histories only when needed
+3. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+4. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
+5. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
+6. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+7. `X4_CONTROL_MAP.md`
+8. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
+9. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
+10. older histories only when needed
 
 ## Scope boundary
 
@@ -248,23 +249,46 @@ Do not issue `0x23` SET.
 
 ## General Windows Mixer path — static-confirmed
 
-`Creative.Platform.Mixer.dll` handles ordinary endpoint/topology mixer control through `ICTMalLgcyLibrary` / native `MalLgcy.dll`.
+Managed/native chain:
+
+`Creative.Platform.Mixer.dll`
+-> `ICTMalLgcyLibrary`
+-> `MalLgcy.dll!CSCT*`
+-> `CTAudEp.dll!CT*`
+
+Full MalLgcy native trace:
+
+`DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+
+Supplied MalLgcy binary:
+
+- SHA-256 `bf2ba6d85fa1cdf20a2fa866d153cefa1e5e7f9af87107d83963ed393e4591aa`
+- x86 / PE32
 
 `MixerRepositoryInitializer` selects a Windows `IDeviceEndpoint.DeviceEndpointId`, constructs its `MixerLine`, and discovers monitoring lines, Mic Boost and Mic AGC from that endpoint/topology.
 
 Recovered paths:
 
-- endpoint master/channel volume -> `MixerLine` -> `MalLgcy`
-- monitoring levels -> `MonitorLine` -> monitoring-control handles -> `MalLgcy`
-- Mic Boost -> KS node type volume -> `MalLgcy`
-- Mic AGC -> KS node auto-gain-control path
+- endpoint master/channel volume -> `MixerLine` -> `MalLgcy` -> `CTAudEp`
+- monitoring levels -> `MonitorLine` -> monitoring-control handles -> `MalLgcy` -> `CTAudEp`
+- Mic Boost -> KS node type volume -> `MalLgcy` -> `CTAudEp`
+- Mic AGC -> KS node auto-gain-control -> `MalLgcy` -> `CTAudEp`
 
 The native API bool parameter is named `fScalar`.
 
 - `MixerLine` / `MonitorLine` use `fScalar=true`, normalized float internally and 0..100 in the managed wrapper.
 - Mic Boost uses `fScalar=false`; range output names are explicitly `MinLevelDB` / `MaxLevelDB`.
 
-This resolves the Windows mixer engineering-unit boundary. It does **not** by itself prove the fixed-point interpretation of CDC `0x22/0x23` raw `UInt16` values.
+The MalLgcy native wrappers perform no conversion. They pass the original parameters directly into matching CTAudEp functions.
+
+Therefore:
+
+- there is no hidden raw-level or dB conversion inside MalLgcy;
+- `CTAudEp.dll` is the next implementation layer for Windows endpoint/topology/KS behavior;
+- the supplied x86 MalLgcy binary cannot be loaded directly into an ARM64-native process;
+- the ARM64 controller should reproduce the required endpoint/topology/KS behavior directly once CTAudEp implementation details are recovered.
+
+This still does **not** prove the fixed-point interpretation of CDC `0x22/0x23` raw `UInt16` values.
 
 ## Driver/APO architecture rule
 
@@ -281,7 +305,8 @@ Current confirmed examples:
 - Graphic EQ -> CTCDC PlaybackManager GEQ block
 - Mixer descriptor/range/mute discovery -> CTCDC `0x21/0x22/0x24`
 - CDC `0x23` official Platform path -> Game/Voice feature indices, not generic Windows mixer
-- normal endpoint/channel/monitoring level -> Creative Platform Mixer / MalLgcy Windows endpoint/topology path
+- normal endpoint/channel/monitoring level -> Creative Platform Mixer -> MalLgcy -> CTAudEp endpoint/topology path
+- Mic Boost / Mic AGC -> CTAudEp KS-node paths behind the legacy wrapper
 - CrystalVoice -> backend not yet resolved; raw `0x95` route rejected as current X4 path
 - Acoustic Engine non-EQ controls -> backend not yet resolved
 - Dolby Digital Live / encoder -> do not assume firmware command; driver/software path remains relevant
@@ -304,22 +329,30 @@ Manual GitHub Actions workflow:
 
 `Build X4 Read-Only Capability Probe ARM64`
 
-No new runtime probe is required for the recovered `0x23` call-path split.
+No new runtime probe is required for the recovered `0x23` call-path split or MalLgcy forwarding path.
 
 ## Next engineering action
 
 Do **not** create another broad runtime probe.
 
-Remaining AudioLevel static work:
+Primary Windows Mixer static target:
+
+1. inspect `CTAudEp.dll`;
+2. recover the exact Core Audio / DeviceTopology calls for endpoint master/channel and monitoring controls;
+3. recover the exact KS node/property implementation for Mic Boost and Mic AGC;
+4. record GUIDs/property IDs/node matching needed for a direct ARM64 implementation.
+
+Remaining CDC AudioLevel static work:
 
 1. recover the exact official conversion for CDC raw `UInt16` level/range values before treating them as dB;
-2. inspect `MalLgcy.dll` if available to complete native implementation provenance for the already-recovered Windows Mixer APIs.
+2. search higher Creative Platform/App consumers of `CDCGameVoice` values; do not look for this conversion in MalLgcy again.
 
 Then continue CrystalVoice / non-EQ Acoustic Engine backend tracing through:
 
 - `Creative.Platform.Devices.dll`
 - `Creative.Platform.Mixer.dll`
 - `Creative.Platform.CoreAudio.dll`
+- `CTAudEp.dll`
 - `CTUSBAPO64.dll`
 - `CTUSBfilt64.sys`
 - Creative KS/property paths.
