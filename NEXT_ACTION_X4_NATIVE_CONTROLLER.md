@@ -74,25 +74,39 @@ Therefore:
 
 The exact Headphone endpoint association must be recovered from MMDevice endpoint properties / official `PKEY_AudioEndpoint_Association` and `PKEY_FX_Association` semantics.
 
-## Immediate priority 1 — one more read-only endpoint-property pass
+## Immediate priority 1 — run dedicated read-only MMDevice endpoint probe
 
-Dump all property keys and values for the X4 MMDevice endpoints and identify at minimum:
+Probe source:
 
-1. `PKEY_AudioEndpoint_Association`;
-2. `PKEY_AudioEndpoint_FormFactor`;
-3. endpoint/device-interface identity properties;
-4. render Speaker vs Headphone differentiation;
-5. capture Microphone association;
-6. any property that ties the endpoint back to the X4 `msft_topo` interface.
+`src/x4-mmdevice-endpoint-probe-arm64`
 
-This must remain read-only.
+Manual workflow:
 
-Microsoft's current SYSVAD model uses:
+`Build X4 MMDevice Endpoint Probe ARM64`
 
-- `PKEY_AudioEndpoint_Association = {1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2`
-- `PKEY_FX_Association = {D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0`
+The workflow is `workflow_dispatch` only and is exposed from `main` while checking out `exp/windows-arm64-x4-native-controller` source.
 
-The association value is a KS category GUID; it is not inherently the same thing as an FX slot number.
+Artifact contents:
+
+- `x4-mmdevice-endpoint-probe.exe`
+- `RUN-MMDEVICE-ENDPOINT-PROBE.cmd`
+- `README.md`
+
+Run `RUN-MMDEVICE-ENDPOINT-PROBE.cmd` on the ARM64 X4 machine and return:
+
+`X4_MMDEVICE_ENDPOINT_REPORT.txt`
+
+For each X4 MMDevice endpoint it reports, read-only:
+
+1. endpoint ID;
+2. render/capture data flow;
+3. endpoint state;
+4. `PKEY_AudioEndpoint_Association`;
+5. `PKEY_AudioEndpoint_FormFactor`.
+
+The required result is an exact Speaker/Headphone/Microphone association map. No registry/property/CTCDC write is performed.
+
+Microsoft documents `PKEY_AudioEndpoint_Association` as a `VT_LPWSTR` KS pin-category GUID and `PKEY_AudioEndpoint_FormFactor` as a `VT_UI4` `EndpointFormFactor` value.
 
 ## Immediate priority 2 — finalize pass-through test package only after association is exact
 
