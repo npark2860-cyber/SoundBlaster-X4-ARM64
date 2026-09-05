@@ -1,0 +1,127 @@
+; REVIEW ONLY — NOT AN INSTALLABLE INF
+; Windows 11 native ARM64 APO component package model for Sound Blaster X4 Stage A0.
+; Keep this suffix as .inx.review until every TODO is resolved and live installation is explicitly approved.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = AudioProcessingObject
+ClassGuid   = {5989fce8-9cd0-467d-8a6a-5419e31529d4}
+Provider    = %ProviderName%
+DriverVer   = 09/05/2026,0.0.1.0
+CatalogFile = X4ApoArm64-TODO.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = ApoComponents,NTARM64.10.0...22000
+
+[ApoComponents.NTARM64.10.0...22000]
+; TODO: replace this placeholder with the final component identity only after review.
+%Apo.ComponentDesc% = ApoComponent_Install,SWC\VEN_TODO&CID_X4APO
+
+[ApoComponent_Install]
+CopyFiles = Apo_CopyFiles
+AddReg    = Apo_AddReg
+
+[Apo_CopyFiles]
+X4ApoArm64.dll
+
+[Apo_AddReg]
+; -----------------------------------------------------------------------------
+; COM registration — exact official SB1815 Creative SFX/MFX/EFX CLSIDs.
+; -----------------------------------------------------------------------------
+HKR,Classes\CLSID\%X4_SFX_CLSID%,,,%SFX_FriendlyName%
+HKR,Classes\CLSID\%X4_SFX_CLSID%\InProcServer32,,0x00020000,%13%\X4ApoArm64.dll
+HKR,Classes\CLSID\%X4_SFX_CLSID%\InProcServer32,ThreadingModel,,"Both"
+
+HKR,Classes\CLSID\%X4_MFX_CLSID%,,,%MFX_FriendlyName%
+HKR,Classes\CLSID\%X4_MFX_CLSID%\InProcServer32,,0x00020000,%13%\X4ApoArm64.dll
+HKR,Classes\CLSID\%X4_MFX_CLSID%\InProcServer32,ThreadingModel,,"Both"
+
+HKR,Classes\CLSID\%X4_EFX_CLSID%,,,%EFX_FriendlyName%
+HKR,Classes\CLSID\%X4_EFX_CLSID%\InProcServer32,,0x00020000,%13%\X4ApoArm64.dll
+HKR,Classes\CLSID\%X4_EFX_CLSID%\InProcServer32,ThreadingModel,,"Both"
+
+; -----------------------------------------------------------------------------
+; AudioEngine APO registration.
+; Stage A0 CRegAPOProperties uses version 1.0, default 1-in/1-out topology,
+; default flags and IAudioProcessingObject as the primary interface.
+; -----------------------------------------------------------------------------
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"FriendlyName",,%SFX_FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MajorVersion",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MinorVersion",0x00010001,0
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"Flags",0x00010001,%APO_FLAG_DEFAULT%
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MinInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MaxInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MinOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MaxOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"NumAPOInterfaces",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_SFX_CLSID%,"APOInterface0",,%IAudioProcessingObject_IID%
+
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"FriendlyName",,%MFX_FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MajorVersion",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MinorVersion",0x00010001,0
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"Flags",0x00010001,%APO_FLAG_DEFAULT%
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MinInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MaxInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MinOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MaxOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"NumAPOInterfaces",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_MFX_CLSID%,"APOInterface0",,%IAudioProcessingObject_IID%
+
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"FriendlyName",,%EFX_FriendlyName%
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"Copyright",,%Copyright%
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MajorVersion",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MinorVersion",0x00010001,0
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"Flags",0x00010001,%APO_FLAG_DEFAULT%
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MinInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MaxInputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MinOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MaxOutputConnections",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"MaxInstances",0x00010001,0xffffffff
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"NumAPOInterfaces",0x00010001,1
+HKR,AudioEngine\AudioProcessingObjects\%X4_EFX_CLSID%,"APOInterface0",,%IAudioProcessingObject_IID%
+
+[ApoComponent_Install.HW]
+AddReg = FriendlyName_AddReg
+
+[FriendlyName_AddReg]
+HKR,,FriendlyName,,%Apo.ComponentDesc%
+
+[ApoComponent_Install.Services]
+AddService=,2
+
+[SourceDisksNames]
+1 = Disk
+
+[SourceDisksFiles]
+X4ApoArm64.dll = 1
+
+[DestinationDirs]
+Apo_CopyFiles = 13
+
+[SignatureAttributes]
+X4ApoArm64.dll = SignatureAttributes.PETrust
+
+[SignatureAttributes.PETrust]
+PETrust = true
+
+[Strings]
+MfgName           = "SoundBlaster-X4-ARM64 project"
+ProviderName      = "SoundBlaster-X4-ARM64 project"
+Apo.ComponentDesc = "Sound Blaster X4 ARM64 Stage A0 APO"
+
+X4_SFX_CLSID = "{71DAB6A1-39F3-423E-90A8-032729851157}"
+X4_MFX_CLSID = "{C624D7B2-8333-448E-85C8-51EEFC2025ED}"
+X4_EFX_CLSID = "{EC2F4B76-6AE1-4DB9-8FF6-344B74CF9650}"
+
+IAudioProcessingObject_IID = "{FD7F2B29-24D0-4B5C-B177-592C39F9CA10}"
+APO_FLAG_DEFAULT = 0x0000000e
+
+SFX_FriendlyName = "Sound Blaster X4 ARM64 Stage A0 SFX"
+MFX_FriendlyName = "Sound Blaster X4 ARM64 Stage A0 MFX"
+EFX_FriendlyName = "Sound Blaster X4 ARM64 Stage A0 EFX"
+Copyright = "SoundBlaster-X4-ARM64 project"
