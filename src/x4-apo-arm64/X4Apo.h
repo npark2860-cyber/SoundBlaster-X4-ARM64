@@ -61,7 +61,7 @@ protected:
     CComPtr<IMMDevice> m_endpoint;
 };
 
-class CX4SfxApo final :
+class CX4SfxApo :
     public CComObjectRootEx<CComMultiThreadModel>,
     public CComCoClass<CX4SfxApo, &CLSID_X4_SFX>,
     public CX4PassThroughApoBase
@@ -84,7 +84,7 @@ public:
     static const CRegAPOProperties<1> sm_RegProperties;
 };
 
-class CX4MfxApo final :
+class CX4MfxApo :
     public CComObjectRootEx<CComMultiThreadModel>,
     public CComCoClass<CX4MfxApo, &CLSID_X4_MFX>,
     public CX4PassThroughApoBase
@@ -107,7 +107,7 @@ public:
     static const CRegAPOProperties<1> sm_RegProperties;
 };
 
-class CX4EfxApo final :
+class CX4EfxApo :
     public CComObjectRootEx<CComMultiThreadModel>,
     public CComCoClass<CX4EfxApo, &CLSID_X4_EFX>,
     public CX4PassThroughApoBase
