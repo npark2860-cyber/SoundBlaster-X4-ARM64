@@ -16,151 +16,129 @@ Validated `X4ApoArm64.dll`:
 - SHA-256 `136aaa68e83a952e19b786526dae76ce026b3641b8cf84f13bbbe9df9152abcd`
 - PE32+ ARM64 / machine `0xAA64`
 - exports `DllCanUnloadNow`, `DllGetClassObject`
-- no `DllRegisterServer`
 - official X4 SFX/MFX/EFX CLSIDs present
 - AVRT sections `RT_CODE`, `RT_CONST`, `RT_DATA` present
 - no Creative x64 DLL imports
 
-Offline native ARM64 COM probe result:
+Offline ARM64 COM runtime probe:
 
 `RESULT: PASS`
-
-For SFX, MFX and EFX independently:
-
-- `DllGetClassObject(IClassFactory)` -> `S_OK`
-- `IClassFactory::CreateInstance(IAudioProcessingObject)` -> `S_OK`
-- QI `IAudioProcessingObject` -> PASS
-- QI `IAudioProcessingObjectRT` -> PASS
-- QI `IAudioProcessingObjectConfiguration` -> PASS
-- QI `IAudioSystemEffects` -> PASS
-- QI `IAudioSystemEffects2` -> PASS
-- QI `IAudioSystemEffects3` -> PASS
-- QI `IAudioProcessingObjectNotifications` -> PASS
-
-After releases:
-
-- `DllCanUnloadNow` -> `S_OK`
 
 Canonical traces:
 
 - `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
 - `DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
 
-This closes the isolated native ARM64 binary/class-factory/interface gate.
+## usbaudio2 attachment discovery — runtime PASS
 
-## Current gate — package attachment review, still NON-INSTALLING
+Canonical runtime record:
+
+`DEBUG_HISTORY_20260905_X4_USBAUDIO2_ATTACHMENT_RUNTIME_SUCCESS.md`
+
+Live X4 audio devnode:
+
+`USB\VID_041E&PID_3278&MI_03\7&8197BA2&0&0003`
+
+Confirmed:
+
+- Class `MEDIA`
+- Service `usbaudio2`
+- Friendly name `Sound Blaster X4`
+- KSCATEGORY_AUDIO `msft_wave`
+- KSCATEGORY_AUDIO `msft_topo`
+- KSCATEGORY_TOPOLOGY `msft_topo`
+
+Runtime `msft_topo` categories include:
+
+- Speaker
+- SPDIF
+- Microphone
+- Line
+- Digital audio interface
+
+This closely reproduces the endpoint-category families recovered from the official SB1815 INF and confirms that the X4-specific package should target `USB\VID_041E&PID_3278&MI_03` while retaining Microsoft `usbaudio2` as the function driver.
+
+Current bare `usbaudio2` state has no `FX` or `EP` subtree in the inspected devnode/driver/audio-interface/topology-interface registry locations. The Stage A0 APO therefore is not currently attached to AudioDG; this is not an APO DLL failure.
+
+## Current blocking ambiguity — Headphone endpoint association
+
+The live KS topology did **not** expose a `KSNODETYPE_HEADPHONES` category.
+
+The official Creative SB1815 Win11 INF nevertheless has a distinct `FX\1` Headphone entry using the same SFX/MFX/EFX CLSIDs as Speaker.
+
+Therefore:
+
+- do not treat `FX\n` as a live KS pin number;
+- do not guess that `FX\1` maps to KS pin 1;
+- do not activate the review package yet.
+
+The exact Headphone endpoint association must be recovered from MMDevice endpoint properties / official `PKEY_AudioEndpoint_Association` and `PKEY_FX_Association` semantics.
+
+## Immediate priority 1 — one more read-only endpoint-property pass
+
+Dump all property keys and values for the X4 MMDevice endpoints and identify at minimum:
+
+1. `PKEY_AudioEndpoint_Association`;
+2. `PKEY_AudioEndpoint_FormFactor`;
+3. endpoint/device-interface identity properties;
+4. render Speaker vs Headphone differentiation;
+5. capture Microphone association;
+6. any property that ties the endpoint back to the X4 `msft_topo` interface.
+
+This must remain read-only.
+
+Microsoft's current SYSVAD model uses:
+
+- `PKEY_AudioEndpoint_Association = {1DA5D803-D492-4EDD-8C23-E0C0FFEE7F0E},2`
+- `PKEY_FX_Association = {D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0`
+
+The association value is a KS category GUID; it is not inherently the same thing as an FX slot number.
+
+## Immediate priority 2 — finalize pass-through test package only after association is exact
 
 Review directory:
 
 `packaging/x4-apo-arm64-review`
 
-Files:
+Keep `.inx.review` non-installing until Headphone/Speaker/Microphone associations are exact.
 
-- `README.md`
-- `X4ApoComponent.inx.review`
-- `X4ApoExtension.inx.review`
+Then:
 
-The component review follows Microsoft's Windows 11 `Class=AudioProcessingObject` model and records:
+1. choose final software-component identity;
+2. generate unique ExtensionId;
+3. wire `AddComponent` to the X4 MI_03 extension;
+4. attach only Speaker/Headphone/Microphone pass-through SFX/MFX/EFX metadata;
+5. build/sign/verify package;
+6. test rollback before enabling any DSP.
 
-- ARM64-only target;
-- `X4ApoArm64.dll` DriverStore copy;
-- COM registration for official X4 SFX/MFX/EFX CLSIDs;
-- `AudioEngine\AudioProcessingObjects` registration;
-- `IAudioProcessingObject` primary interface;
-- Stage A0 1-in/1-out/default APO metadata.
+First live runtime gate:
 
-The extension review records:
-
-- X4 HWID `USB\VID_041E&PID_3278&MI_03`;
-- future `AddComponent` association;
-- official SB1815 Win11 FX payload for:
-  - `FX\0` Speaker
-  - `FX\1` Headphone
-  - `FX\3` Microphone
-- SFX/MFX/EFX all restricted to `AUDIO_SIGNALPROCESSINGMODE_DEFAULT` as in the official Creative INF.
-
-The FX payload section is deliberately **not referenced by the install section**. Component ID, ExtensionId and catalogs remain placeholders. The files use `.inx.review` and must not be renamed or installed yet.
-
-## Immediate priority 1 — read-only ARM64 usbaudio2 attachment discovery
-
-Before producing a real INF, determine the actual live device/interface layout of the Microsoft `usbaudio2` stack for the X4 audio interface.
-
-Need exact read-only evidence for:
-
-1. devnode instance for `USB\VID_041E&PID_3278&MI_03`;
-2. generated audio/topology interfaces and reference strings;
-3. KS pin categories / endpoint associations corresponding to Speaker, Headphone and Microphone;
-4. current `FX\*` / `EP\*` property presence, if any;
-5. whether the X4 endpoint builder already preserves official slot numbering (`FX\0`, `FX\1`, `FX\3`) under the Microsoft class driver;
-6. exact `PKEY_FX_Association` values needed for those paths.
-
-This discovery must remain read-only.
-
-## Immediate priority 2 — finalize pass-through test package only after attachment is proven
-
-Once the target attachment point is exact:
-
-1. choose the final software-component identity;
-2. generate a real unique ExtensionId;
-3. replace only the review placeholders;
-4. wire the already-reviewed FX payload into the exact target install/interface section;
-5. run INF verification/build/signing checks;
-6. keep the package pass-through only.
-
-The first live package must still contain:
-
-- no Creative DSP algorithms;
-- no Creative FX property writes;
-- no CTCDC writes;
-- no SPDIF/DDL;
-- no CTUSBWrap/DGFX;
-- no Creative UpperFilter replacement unless separate evidence later proves it is required.
-
-## First live runtime gate after package review
-
-The first installation test is only intended to prove:
-
-`PnP package -> APO registration -> X4 endpoint FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
+`PnP package -> APO registration -> endpoint FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
 
 Success criteria:
 
 - Speaker/Headphone/Microphone remain functional;
-- no audio loss or AudioDG crash;
-- native ARM64 APO actually loads in the graph;
-- pass-through audio remains transparent;
-- uninstall/rollback restores the original Microsoft `usbaudio2` state.
+- no AudioDG crash or audio loss;
+- native ARM64 APO loads in the live graph;
+- pass-through remains transparent;
+- uninstall restores bare Microsoft `usbaudio2` state.
 
-Do not enable Creative effect keys yet.
+## Fixed exclusions
 
-## Later gates
-
-Only after real AudioDG pass-through succeeds:
-
-1. exact general-vs-headphone context selection;
-2. read-only `IAudioSystemEffectsPropertyStore` open;
-3. property-change notification validation;
-4. Creative Platform repository/discovery compatibility;
-5. one DSP feature at a time;
-6. only then effect setters.
-
-## Fixed architecture constraints
-
-- retain Microsoft USB Audio 2.0 as base driver
-- original `CTUSBAPO64.dll` is x86-64 only and is not the native ARM64 AudioDG solution
-- Speaker/Headphone/Microphone use the official Creative SFX/MFX/EFX identities
-- general FX context `{852311BC-1AFB-454E-92CA-C35252CACAAF}`
-- headphone FX context `{3F5F306B-A033-4F19-843D-1C44A736FF4D}`
-- SPDIF/DDL/CTUSBWrap/DGFX remain a separate later track
-- no B5 ASIO changes from this branch
+- no Creative DSP yet
+- no Creative FX property writes
+- no CTCDC writes
+- no SPDIF/DDL
+- no CTUSBWrap/DGFX
+- no Creative UpperFilter replacement without separate evidence
+- no B5 ASIO changes
 
 ## Safety
 
 - one variable at a time
-- Stage A0 remains pass-through/read-only
-- no new hardware state changes automatically
 - no manual FX registry writes
 - no `regsvr32`
-- no live APO install while attachment/association is unresolved
+- no live APO install while Headphone association is unresolved
 - no blind `0x95` probing
 - no generic `0x23` probing
 - no unrelated changes
