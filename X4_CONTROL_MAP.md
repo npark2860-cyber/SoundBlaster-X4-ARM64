@@ -1,6 +1,6 @@
 # X4 CONTROL MAP — Static Analysis Baseline
 
-Updated: 2026-09-04 KST
+Updated: 2026-09-05 KST
 
 ## Scope
 
@@ -9,10 +9,11 @@ This document records the read-only/static control map recovered from the suppli
 Source binary hashes:
 
 - `Creative.Platform.Devices.dll` SHA-256 `2d77172fb6ae850b6d03a09830892c8c3a0ab79e10dda28f40a76b3fadc47e93`
+- `Creative.Platform.Mixer.dll` SHA-256 `33f6ac6c84e093c766e8b483660d49518a8a0c14da144bd7a6a4f8bf0a79ae45`
 - `CTCDC.dll` SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
 - `CTIntrfu.dll` SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
 
-The CTCDC/CTIntrfu hashes match the binaries previously used for the successful Windows Direct Mode reconstruction.
+The Devices/CTCDC/CTIntrfu hashes match the previously recorded controller baseline exactly.
 
 ## Confirmed CDCRawCommand values
 
@@ -50,11 +51,11 @@ The CTCDC/CTIntrfu hashes match the binaries previously used for the successful 
 
 - Set = `0`
 - Get = `1`
+- Support = `2`
+- SupportV2 = `5`
 - GetAddParam = `6`
 - SetV2 = `7`
 - GetV2 = `8`
-
-The current read-only probe uses only `Get = 1` for Malcolm parameter reads.
 
 ## Malcolm modules
 
@@ -148,7 +149,82 @@ Recovered `AudioControlType` values:
 - Headset = `20`
 - Automatic Gain Control = `63`
 
-The actual SB1815 control-index list and value ranges still require runtime readback from command `0x21` before issuing per-index `0x22/0x23/0x24` queries.
+### Runtime-confirmed SB1815 AudioControl list
+
+| Index | Type |
+|---:|---|
+| 0 | Speaker |
+| 1 | Headphone |
+| 2 | SPDIF Output |
+| 3 | Mic Monitoring |
+| 4 | Line Monitoring |
+| 5 | Mic Input |
+| 6 | Line Input |
+| 7 | What U Hear Recording |
+| 8 | SPDIF Monitoring |
+| 9 | SPDIF Input |
+| 10 | Automatic Gain Control |
+
+`0x22` returns range entries for indices `0..9` and `0x24` Mute GET works for indices `0..10` in the tested runtime.
+
+## AudioLevel (`0x23`) — official Windows static model
+
+Full trace:
+
+`DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+
+### GET request
+
+`RawCmdAudioLevelGet`, `Pack=1`:
+
+- `Operation : byte`
+- `AudioControlIndex : byte`
+
+GET frame:
+
+`5A 23 02 01 <index>`
+
+### GET response
+
+`RawResAudioLevelGet`, `Pack=1`:
+
+- `AudioControlIndex : byte`
+- `CurValue : UInt16`
+
+Official managed payload size: **3 bytes**.
+
+The extra runtime trailing `0x03` seen on raw index 0/1 is not a field of this structure and is ignored by the managed parser. Its firmware semantic meaning remains unresolved.
+
+### Official call-path scope
+
+Creative Platform creates `0x23` keys only for `CDCGameVoice.GameIndex` and `VoiceIndex`.
+
+Those are selected by descriptor type:
+
+- `GameAudioLevel = 19`
+- `ChatAudioLevel = 18`
+
+The runtime SB1815 list above contains neither type. Therefore do not use generic per-index `0x23` reads as the normal Windows Speaker/Input/Monitoring mixer backend, and do not interpret raw index 2..9 `GeneralFailure` as proof of missing volume capability.
+
+No `0x23` SET is authorized.
+
+## Windows Mixer backend
+
+`Creative.Platform.Mixer.dll` routes ordinary mixer controls through `ICTMalLgcyLibrary` / native `MalLgcy.dll` using Windows endpoint/topology/KS objects.
+
+| Control | Managed path | Native mode |
+|---|---|---|
+| Endpoint master volume | `MixerLine` | `fScalar=true` |
+| Endpoint channel volume | `MixerLine` | `fScalar=true` |
+| Monitoring level | `MonitorLine` | `fScalar=true` |
+| Mic Boost | KS node volume | `fScalar=false` / dB path |
+| Mic AGC | KS node auto-gain | boolean/control path |
+
+`MixerLine` and `MonitorLine` convert normalized scalar floats to/from managed 0..100.
+
+KS/monitoring range signatures explicitly name their range outputs `MinLevelDB` / `MaxLevelDB`.
+
+The exact CDC raw `UInt16` fixed-point-to-dB conversion for `0x22/0x23` is not implemented in the recovered Devices path and remains to be located before hard-coding a conversion.
 
 ## Sound Mode control (`0xA7`)
 
@@ -186,31 +262,21 @@ Output types:
 
 Acoustic Engine Sound Mode parameters map to Surround, Crystalizer, Bass, Smart Volume, Dialog Plus, and Bass Crossover.
 
-## Runtime-confirmed item
+## Runtime-confirmed state-changing item
 
 Direct Mode remains the currently hardware-confirmed state-changing Windows control:
 
 - ON: `5A 39 03 00 05 01`
 - OFF: `5A 39 03 00 05 00`
 
-## Current read-only runtime probe
+## Current controller-analysis branch
 
 Branch:
 
-`exp/windows-arm64-x4-readonly-capability-map`
+`exp/windows-arm64-x4-native-controller`
 
 Probe path:
 
 `src/x4-control-readonly-probe`
 
-The probe contains hard-coded GET/query operations only and first requires the already-known Maximum Payload Size and firmware session checks to validate. It does not contain a raw-command CLI or any state-changing operation.
-
-Runtime goals:
-
-1. map current PlaybackManager values;
-2. map current VoiceInputManager values;
-3. obtain Graphic EQ capability/current values;
-4. obtain actual SB1815 AudioControl information/indexes;
-5. obtain current Sound Mode/support data.
-
-No runtime result from this new capability probe is recorded yet.
+No new runtime probe is required for the recovered `0x23` backend split. Continue static recovery before any new state-changing command.
