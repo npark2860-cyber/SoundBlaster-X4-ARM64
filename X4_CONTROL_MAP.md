@@ -13,8 +13,9 @@ Source binary hashes:
 - `CTCDC.dll` SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
 - `CTIntrfu.dll` SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
 - `MalLgcy.dll` SHA-256 `bf2ba6d85fa1cdf20a2fa866d153cefa1e5e7f9af87107d83963ed393e4591aa`
+- `CTAudEp.dll` SHA-256 `76adb6b105757849eb61c69842db7a4f46ae01251c0b1791fe7d248a31b469fa`
 
-The supplied `MalLgcy.dll` is x86 / PE32. Its relevant Mixer exports forward unchanged to `CTAudEp.dll` imports.
+The supplied `MalLgcy.dll` and `CTAudEp.dll` are x86 / PE32. The relevant Windows mixer behavior has been statically recovered far enough to replace those legacy DLL boundaries directly with native Windows COM on ARM64.
 
 ## Confirmed CDCRawCommand values
 
@@ -209,35 +210,98 @@ The runtime SB1815 list above contains neither type. Therefore do not use generi
 
 No `0x23` SET is authorized.
 
-## Windows Mixer backend
+## Windows Mixer backend — native path recovered
 
-Managed path:
+Full traces:
+
+- `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+- `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+
+Managed/native chain:
 
 `Creative.Platform.Mixer.dll`
--> `ICTMalLgcyLibrary`
 -> `MalLgcy.dll!CSCT*`
 -> `CTAudEp.dll!CT*`
+-> Windows Core Audio / DeviceTopology
 
-`MalLgcy.dll` native forwarding was confirmed in:
+### Endpoint volume
 
-`DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+`CTAudEp` obtains the target `IMMDevice` from `IMMDeviceEnumerator` and activates:
 
-| Control | Managed mode | MalLgcy forwarding target |
-|---|---|---|
-| Endpoint master volume | `fScalar=true` | `CTGetMasterVolume` / `CTSetMasterVolume` |
-| Endpoint channel volume | `fScalar=true` | `CTGetChannelVolume` / `CTSetChannelVolume` |
-| Monitoring level | `fScalar=true` | `CTGetVolumeLevelOfMonitoringControl` / setters |
-| Monitoring range | float dB range contract | `CTGetVolumeLevelRangeOfMonitoringControl` |
-| Mic Boost | `fScalar=false` / dB path | KS node type volume APIs |
-| Mic AGC | boolean/control path | KS node auto-gain APIs |
+`IID_IAudioEndpointVolume`
 
-The MalLgcy wrappers pass the original parameters unchanged and perform no scalar/dB/fixed-point conversion.
+Master/channel operations use the normal `IAudioEndpointVolume` scalar or dB methods according to `fScalar`.
 
-`MixerLine` and `MonitorLine` convert normalized scalar floats to/from managed 0..100 before/after this native boundary.
+| Control | Public Windows backend |
+|---|---|
+| Master volume | `IAudioEndpointVolume::Get/SetMasterVolumeLevel[Scalar]` |
+| Channel volume | `IAudioEndpointVolume::Get/SetChannelVolumeLevel[Scalar]` |
+| Volume range | `IAudioEndpointVolume::GetVolumeRange` |
 
-The supplied MalLgcy binary is x86 PE32, so an ARM64-native controller cannot use this exact DLL in-process. The target implementation should reproduce the endpoint/topology/KS behavior directly with native Windows APIs after the underlying `CTAudEp.dll` implementation is recovered.
+### Monitoring
 
-The exact CDC raw `UInt16` fixed-point-to-dB conversion for `0x22/0x23` is unrelated to this MalLgcy forwarding layer and remains to be located before hard-coding a conversion.
+`CTAudEp` activates `IDeviceTopology`, obtains connector 0, follows `IConnector::GetConnectedTo`, queries `IPart`, and traverses incoming parts.
+
+The relevant topology controls are activated as:
+
+- `IID_IAudioVolumeLevel`
+- `IID_IAudioMute`
+
+Monitoring level/range/channel-count use `IAudioVolumeLevel`; monitoring mute uses `IAudioMute`.
+
+### Mic Boost
+
+`CTAudEp` locates a part with subtype:
+
+`KSNODETYPE_VOLUME`
+
+and activates:
+
+`IID_IAudioVolumeLevel`.
+
+Creative's managed Mic Boost path uses non-scalar/dB mode. SET uses `IAudioVolumeLevel::SetLevelUniform` after any requested scalar conversion.
+
+### Mic AGC
+
+`CTAudEp` locates:
+
+`KSNODETYPE_AGC`
+
+and activates:
+
+`IID_IAudioAutoGainControl`.
+
+GET/SET map to `GetEnabled` / `SetEnabled`.
+
+### CTAudEp topology dB/scalar mapping
+
+For `IAudioVolumeLevel`, CTAudEp converts dB floats to/from scalar itself.
+
+Base mapping:
+
+`scalar = 10 ^ ((levelDB - maxDB) / 20)`
+
+with a low-end 6 dB interpolation branch for ranges below 40 dB.
+
+This is a Windows topology float conversion and is **not** evidence for CDC `0x22/0x23` raw `UInt16` encoding.
+
+### ARM64 implementation consequence
+
+The supplied MalLgcy/CTAudEp binaries are x86 and should not become ARM64 runtime dependencies.
+
+The ordinary mixer subset can instead be implemented directly with public Windows interfaces:
+
+| Function | ARM64 target |
+|---|---|
+| Endpoint master/channel | `IAudioEndpointVolume` |
+| Monitoring volume | `IDeviceTopology/IPart` + `IAudioVolumeLevel` |
+| Monitoring mute | `IDeviceTopology/IPart` + `IAudioMute` |
+| Mic Boost | `KSNODETYPE_VOLUME` + `IAudioVolumeLevel` |
+| Mic AGC | `KSNODETYPE_AGC` + `IAudioAutoGainControl` |
+
+No Creative-only kernel IOCTL was found in the mixer functions traced above.
+
+The exact CDC raw `UInt16` engineering-unit conversion remains separate and unresolved.
 
 ## Sound Mode control (`0xA7`)
 
@@ -292,4 +356,4 @@ Probe path:
 
 `src/x4-control-readonly-probe`
 
-No new runtime probe is required for the recovered `0x23` backend split or MalLgcy forwarding path. Continue static recovery before any new state-changing command.
+No new runtime probe is required for the recovered `0x23`, MalLgcy, or CTAudEp call-path splits. Continue static recovery of the remaining CDC/App/APO paths before adding new state-changing commands.
