@@ -56,6 +56,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/x4-apo-arm64-stage-a0 | Out-Null
           Copy-Item $dll dist/x4-apo-arm64-stage-a0/X4ApoArm64.dll
           Copy-Item $probe dist/x4-apo-arm64-stage-a0/X4ApoComProbeArm64.exe
+          Copy-Item src/x4-apo-com-probe-arm64/RUN-COM-PROBE.cmd dist/x4-apo-arm64-stage-a0/RUN-COM-PROBE.cmd
           Copy-Item src/x4-apo-arm64/README.md dist/x4-apo-arm64-stage-a0/README-APO.md
           Copy-Item src/x4-apo-com-probe-arm64/README.md dist/x4-apo-arm64-stage-a0/README-COM-PROBE.md
 
