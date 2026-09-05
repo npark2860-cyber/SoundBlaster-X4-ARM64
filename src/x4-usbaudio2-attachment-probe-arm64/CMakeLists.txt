@@ -6,7 +6,15 @@ add_executable(x4-usbaudio2-attachment-probe
 )
 
 target_compile_features(x4-usbaudio2-attachment-probe PRIVATE cxx_std_17)
-target_compile_definitions(x4-usbaudio2-attachment-probe PRIVATE UNICODE _UNICODE)
+target_compile_definitions(x4-usbaudio2-attachment-probe PRIVATE
+    UNICODE
+    _UNICODE
+    KSNODETYPE_ANY=GUID_NULL
+)
+target_precompile_headers(x4-usbaudio2-attachment-probe PRIVATE
+    <cwctype>
+    <iterator>
+)
 target_link_libraries(x4-usbaudio2-attachment-probe PRIVATE setupapi cfgmgr32 ole32 uuid)
 
 if(MSVC)
