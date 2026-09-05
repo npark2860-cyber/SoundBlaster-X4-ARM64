@@ -19,13 +19,14 @@ Do not reconstruct state from conversation memory when repository documents can 
 ## Read order for the next tab
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
-2. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
-3. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
-4. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-5. `X4_CONTROL_MAP.md`
-6. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-7. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
-8. older histories only when needed
+2. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+3. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
+4. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
+5. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+6. `X4_CONTROL_MAP.md`
+7. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
+8. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
+9. older histories only when needed
 
 ## Scope boundary
 
@@ -174,7 +175,7 @@ Raw range data is recorded in:
 
 `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
 
-Do not yet normalize all values to dB. The exact raw fixed-point/engineering-unit conversion still requires static recovery.
+The exact CDC raw `UInt16` fixed-point/engineering-unit conversion is still not statically proven. Do not hard-code `/256` as confirmed yet.
 
 ### `0x24` Mute GET — full success
 
@@ -189,25 +190,81 @@ All other indices = `0` in that capture.
 
 This strongly validates the `0..10` index map and `0x24` GET path.
 
-### `0x23` AudioLevel GET — incomplete semantics
+## `0x23` AudioLevel — static path recovered
 
-The current two-byte GET request succeeded only for:
+Full trace:
 
-- index 0 / Speaker
-- index 1 / Headphone
+`DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
 
-Both successful responses contained a **4-byte payload**, with an unexplained trailing `0x03`.
+### Exact request structure
 
-Indices `2..9` returned ACK `0x80 GeneralFailure` despite:
+Official packed `RawCmdAudioLevelGet` fields:
 
-- descriptors advertising HasVolume;
-- `0x22` returning valid range entries for those indices.
+- `Operation : byte`
+- `AudioControlIndex : byte`
 
-Therefore do not conclude that those controls lack volume support.
+For GET:
 
-The request/response model or channel/active-state semantics are incomplete.
+`5A 23 02 01 <index>`
 
-Do not issue `0x23` SET until the official model/call path is recovered.
+### Exact managed response structure
+
+Official packed `RawResAudioLevelGet` fields:
+
+- `AudioControlIndex : byte`
+- `CurValue : UInt16`
+
+Managed payload size is exactly **3 bytes**.
+
+The successful hardware responses for raw index 0/1 contained a fourth trailing `0x03`, but that byte is:
+
+- not a `RawResAudioLevelGet` field;
+- not managed padding (`Pack=1`);
+- ignored by the official managed response decode.
+
+Its firmware-level semantic meaning remains unresolved. Do not assign a channel-mask or other meaning without new evidence.
+
+### Official call-path meaning
+
+Critical correction: Creative Platform does **not** create generic `0x23` command keys for every `0x21` AudioControl index.
+
+It creates `RawCmdAudioLevelGet/Set` keys only for:
+
+- `CDCGameVoice.GameIndex`
+- `CDCGameVoice.VoiceIndex`
+
+Those indices are selected from descriptor types:
+
+- `GameAudioLevel = 19`
+- `ChatAudioLevel = 18`
+
+Incoming `RawResAudioLevelGet` callbacks are also matched only against those stored Game/Voice indices.
+
+The runtime X4 descriptor list contains neither type 18 nor type 19.
+
+Therefore raw index 2..9 `GeneralFailure` must not be interpreted as missing volume support, and generic per-index `0x23` probing is not the official Windows mixer model.
+
+Do not issue `0x23` SET.
+
+## General Windows Mixer path — static-confirmed
+
+`Creative.Platform.Mixer.dll` handles ordinary endpoint/topology mixer control through `ICTMalLgcyLibrary` / native `MalLgcy.dll`.
+
+`MixerRepositoryInitializer` selects a Windows `IDeviceEndpoint.DeviceEndpointId`, constructs its `MixerLine`, and discovers monitoring lines, Mic Boost and Mic AGC from that endpoint/topology.
+
+Recovered paths:
+
+- endpoint master/channel volume -> `MixerLine` -> `MalLgcy`
+- monitoring levels -> `MonitorLine` -> monitoring-control handles -> `MalLgcy`
+- Mic Boost -> KS node type volume -> `MalLgcy`
+- Mic AGC -> KS node auto-gain-control path
+
+The native API bool parameter is named `fScalar`.
+
+- `MixerLine` / `MonitorLine` use `fScalar=true`, normalized float internally and 0..100 in the managed wrapper.
+- Mic Boost uses `fScalar=false`; range output names are explicitly `MinLevelDB` / `MaxLevelDB`.
+
+This resolves the Windows mixer engineering-unit boundary. It does **not** by itself prove the fixed-point interpretation of CDC `0x22/0x23` raw `UInt16` values.
 
 ## Driver/APO architecture rule
 
@@ -222,7 +279,9 @@ Current confirmed examples:
 
 - Direct Mode -> CTCDC firmware path
 - Graphic EQ -> CTCDC PlaybackManager GEQ block
-- Mixer info/range/mute -> CTCDC firmware path
+- Mixer descriptor/range/mute discovery -> CTCDC `0x21/0x22/0x24`
+- CDC `0x23` official Platform path -> Game/Voice feature indices, not generic Windows mixer
+- normal endpoint/channel/monitoring level -> Creative Platform Mixer / MalLgcy Windows endpoint/topology path
 - CrystalVoice -> backend not yet resolved; raw `0x95` route rejected as current X4 path
 - Acoustic Engine non-EQ controls -> backend not yet resolved
 - Dolby Digital Live / encoder -> do not assume firmware command; driver/software path remains relevant
@@ -245,28 +304,25 @@ Manual GitHub Actions workflow:
 
 `Build X4 Read-Only Capability Probe ARM64`
 
-The branch-local workflow packaging bug was fixed so the mixer executable and launcher are included in the artifact.
+No new runtime probe is required for the recovered `0x23` call-path split.
 
 ## Next engineering action
 
-Do **not** create another broad runtime probe first.
+Do **not** create another broad runtime probe.
 
-First perform static analysis of official Creative binaries for the exact AudioLevel path:
+Remaining AudioLevel static work:
 
-- request struct for `0x23` GET
-- response struct including the extra `0x03`
-- source/monitor/recording-control variations
-- active-state/channel semantics
-- raw-to-dB conversion
+1. recover the exact official conversion for CDC raw `UInt16` level/range values before treating them as dB;
+2. inspect `MalLgcy.dll` if available to complete native implementation provenance for the already-recovered Windows Mixer APIs.
 
-Primary binaries:
+Then continue CrystalVoice / non-EQ Acoustic Engine backend tracing through:
 
 - `Creative.Platform.Devices.dll`
 - `Creative.Platform.Mixer.dll`
-- `CTCDC.dll`
-- `CTIntrfu.dll`
-
-Then continue CrystalVoice/Acoustic Engine backend tracing through Creative Platform + `CTUSBAPO64.dll` / `CTUSBfilt64.sys` / KS-property paths.
+- `Creative.Platform.CoreAudio.dll`
+- `CTUSBAPO64.dll`
+- `CTUSBfilt64.sys`
+- Creative KS/property paths.
 
 Do not repeat blind raw `0x95` probing.
 
