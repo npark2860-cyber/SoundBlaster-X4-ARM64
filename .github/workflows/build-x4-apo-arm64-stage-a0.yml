@@ -21,32 +21,43 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Build Release ARM64
+      - name: Build APO Release ARM64
         shell: pwsh
         run: |
           msbuild src/x4-apo-arm64/X4ApoArm64.vcxproj /m /restore /p:Configuration=Release /p:Platform=ARM64 /v:minimal
 
-      - name: Verify ARM64 PE and stage
+      - name: Build offline COM probe Release ARM64
+        shell: pwsh
+        run: |
+          msbuild src/x4-apo-com-probe-arm64/X4ApoComProbeArm64.vcxproj /m /restore /p:Configuration=Release /p:Platform=ARM64 /v:minimal
+
+      - name: Verify ARM64 PEs and stage
         shell: pwsh
         run: |
           $dll = Join-Path $PWD "src/x4-apo-arm64/bin/ARM64/Release/X4ApoArm64.dll"
-          if (-not (Test-Path $dll)) {
-            throw "$dll was not produced"
-          }
+          $probe = Join-Path $PWD "src/x4-apo-com-probe-arm64/bin/ARM64/Release/X4ApoComProbeArm64.exe"
 
-          $bytes = [System.IO.File]::ReadAllBytes($dll)
-          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
-          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
-          if ($machine -ne 0xAA64) {
-            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
-          }
+          foreach ($file in @($dll, $probe)) {
+            if (-not (Test-Path $file)) {
+              throw "$file was not produced"
+            }
 
-          "ARM64 PE verified: $dll"
-          "SHA256: $((Get-FileHash $dll -Algorithm SHA256).Hash)"
+            $bytes = [System.IO.File]::ReadAllBytes($file)
+            $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+            $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+            if ($machine -ne 0xAA64) {
+              throw ("Expected ARM64 PE machine 0xAA64 for {0}, got 0x{1:X4}" -f $file, $machine)
+            }
+
+            "ARM64 PE verified: $file"
+            "SHA256: $((Get-FileHash $file -Algorithm SHA256).Hash)"
+          }
 
           New-Item -ItemType Directory -Force -Path dist/x4-apo-arm64-stage-a0 | Out-Null
           Copy-Item $dll dist/x4-apo-arm64-stage-a0/X4ApoArm64.dll
-          Copy-Item src/x4-apo-arm64/README.md dist/x4-apo-arm64-stage-a0/README.md
+          Copy-Item $probe dist/x4-apo-arm64-stage-a0/X4ApoComProbeArm64.exe
+          Copy-Item src/x4-apo-arm64/README.md dist/x4-apo-arm64-stage-a0/README-APO.md
+          Copy-Item src/x4-apo-com-probe-arm64/README.md dist/x4-apo-arm64-stage-a0/README-COM-PROBE.md
 
       - name: Upload Stage A0 artifact
         uses: actions/upload-artifact@v4
