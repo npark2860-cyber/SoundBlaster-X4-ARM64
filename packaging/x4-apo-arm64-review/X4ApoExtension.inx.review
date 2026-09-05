@@ -1,0 +1,91 @@
+; REVIEW ONLY — NOT AN INSTALLABLE INF
+; Windows 11 ARM64 Extension-package model for Sound Blaster X4 Stage A0.
+; The FX payload below is intentionally NOT wired into the install section yet.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
+Provider    = %ProviderName%
+; TODO: generate a real unique ExtensionId only after package review.
+ExtensionId = {00000000-0000-0000-0000-000000000000}
+DriverVer   = 09/05/2026,0.0.1.0
+CatalogFile = X4ApoExtension-TODO.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = X4Extensions,NTARM64.10.0...22000
+
+[X4Extensions.NTARM64.10.0...22000]
+%Device.ExtensionDesc% = X4_Extension_Install,USB\VID_041E&PID_3278&MI_03
+
+[X4_Extension_Install]
+
+[X4_Extension_Install.Components]
+; TODO: final component identity must match X4ApoComponent.inx.review.
+AddComponent = X4Apo,,X4Apo_AddComponent
+
+[X4Apo_AddComponent]
+ComponentIDs = SWC\VEN_TODO&CID_X4APO
+Description  = "Sound Blaster X4 ARM64 Stage A0 APO"
+
+; =============================================================================
+; RECOVERED SB1815 FX PAYLOAD — REVIEW DATA ONLY
+; =============================================================================
+; This AddReg section is deliberately NOT referenced by X4_Extension_Install.HW.
+; It records the official Windows 11 X4 graph while the exact ARM64 usbaudio2
+; devnode/interface attachment semantics are reviewed.
+;
+; Official Creative SB1815 Win11 map:
+;   FX\0 Speaker    -> Creative SFX/MFX/EFX
+;   FX\1 Headphone  -> same Creative SFX/MFX/EFX
+;   FX\3 Microphone -> same Creative SFX/MFX/EFX
+;
+; All three official SFX/MFX/EFX streaming-mode lists contain only DEFAULT.
+; SPDIF FX\2, Line-In FX\4 and What-U-Hear FX\5 are intentionally excluded.
+; =============================================================================
+
+[X4_FX_Binding_Review.AddReg]
+; TODO before activation: add exact PKEY_FX_Association values copied from the
+; official SB1815 INF / verified against the generated ARM64 usbaudio2 pin categories.
+
+HKR,"FX\0",%PKEY_FX_StreamEffectClsid%,,%X4_SFX_CLSID%
+HKR,"FX\0",%PKEY_FX_ModeEffectClsid%,,%X4_MFX_CLSID%
+HKR,"FX\0",%PKEY_FX_EndpointEffectClsid%,,%X4_EFX_CLSID%
+HKR,"FX\0",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\0",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\0",%PKEY_EFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+HKR,"FX\1",%PKEY_FX_StreamEffectClsid%,,%X4_SFX_CLSID%
+HKR,"FX\1",%PKEY_FX_ModeEffectClsid%,,%X4_MFX_CLSID%
+HKR,"FX\1",%PKEY_FX_EndpointEffectClsid%,,%X4_EFX_CLSID%
+HKR,"FX\1",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\1",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\1",%PKEY_EFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+HKR,"FX\3",%PKEY_FX_StreamEffectClsid%,,%X4_SFX_CLSID%
+HKR,"FX\3",%PKEY_FX_ModeEffectClsid%,,%X4_MFX_CLSID%
+HKR,"FX\3",%PKEY_FX_EndpointEffectClsid%,,%X4_EFX_CLSID%
+HKR,"FX\3",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\3",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\3",%PKEY_EFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+[Strings]
+MfgName              = "SoundBlaster-X4-ARM64 project"
+ProviderName         = "SoundBlaster-X4-ARM64 project"
+Device.ExtensionDesc = "Sound Blaster X4 ARM64 Stage A0 APO Extension REVIEW"
+
+X4_SFX_CLSID = "{71DAB6A1-39F3-423E-90A8-032729851157}"
+X4_MFX_CLSID = "{C624D7B2-8333-448E-85C8-51EEFC2025ED}"
+X4_EFX_CLSID = "{EC2F4B76-6AE1-4DB9-8FF6-344B74CF9650}"
+
+PKEY_FX_StreamEffectClsid   = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},5"
+PKEY_FX_ModeEffectClsid     = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},6"
+PKEY_FX_EndpointEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},7"
+
+PKEY_SFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},5"
+PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+PKEY_EFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},7"
+
+AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"
+REG_MULTI_SZ = 0x00010000
