@@ -5,6 +5,7 @@
 #include <audioenginebaseapo.h>
 #include <audioengineextensionapo.h>
 #include <baseaudioprocessingobject.h>
+#include <mmdeviceapi.h>
 
 // Official SB1815/X4 Windows 11 APO CLSIDs recovered from ctusbaud.inf.
 extern const CLSID CLSID_X4_SFX;
