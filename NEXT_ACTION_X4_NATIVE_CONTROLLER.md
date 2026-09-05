@@ -8,143 +8,140 @@ Branch:
 
 Use GitHub as source of truth and verify actual branch HEAD before work.
 
-## Stage A0 status — binary + offline COM gates PASSED
+## Stage A0 — PASSED
 
-Validated `X4ApoArm64.dll`:
+Native ARM64 `X4ApoArm64.dll` has passed:
 
-- size `176640` bytes
-- SHA-256 `136aaa68e83a952e19b786526dae76ce026b3641b8cf84f13bbbe9df9152abcd`
-- PE32+ ARM64 / machine `0xAA64`
-- exports `DllCanUnloadNow`, `DllGetClassObject`
-- official X4 SFX/MFX/EFX CLSIDs present
-- AVRT sections `RT_CODE`, `RT_CONST`, `RT_DATA` present
-- no Creative x64 DLL imports
+- Release ARM64 build;
+- PE machine `0xAA64` verification;
+- export/CLSID/AVRT binary inspection;
+- offline ARM64 COM class-factory/object/interface probe for SFX/MFX/EFX;
+- final `DllCanUnloadNow == S_OK`.
 
-Offline ARM64 COM runtime probe:
+## usbaudio2 attachment discovery — PASSED
 
-`RESULT: PASS`
+Read-only runtime evidence proves the X4 audio function is:
 
-Canonical traces:
+`USB\VID_041E&PID_3278&MI_03`
 
-- `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
-- `DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
+with:
 
-## usbaudio2 attachment discovery — runtime PASS
+- class `MEDIA`;
+- service `usbaudio2`;
+- KSCATEGORY_AUDIO `msft_wave`;
+- KSCATEGORY_AUDIO `msft_topo`;
+- KSCATEGORY_TOPOLOGY `msft_topo`.
 
-Canonical runtime record:
+The current bare `usbaudio2` interface/device keys contain no `FX` or `EP` subtree.
 
-`DEBUG_HISTORY_20260905_X4_USBAUDIO2_ATTACHMENT_RUNTIME_SUCCESS.md`
+Runtime `msft_topo` pin categories include Speaker, SPDIF, Microphone, Line and Digital Audio Interface.
 
-Live X4 audio devnode:
+## MMDevice endpoint association discovery — PASSED
 
-`USB\VID_041E&PID_3278&MI_03\7&8197BA2&0&0003`
+Canonical record:
 
-Confirmed:
+`DEBUG_HISTORY_20260905_X4_MMDEVICE_ENDPOINT_ASSOCIATION_RUNTIME_SUCCESS.md`
 
-- Class `MEDIA`
-- Service `usbaudio2`
-- Friendly name `Sound Blaster X4`
-- KSCATEGORY_AUDIO `msft_wave`
-- KSCATEGORY_AUDIO `msft_topo`
-- KSCATEGORY_TOPOLOGY `msft_topo`
+Six active X4 endpoints were found:
 
-Runtime `msft_topo` categories include:
+- Render Speakers
+- Render SPDIF
+- Capture Microphone
+- Capture UnknownDigitalPassthrough
+- Capture SPDIF
+- Capture LineLevel
 
-- Speaker
-- SPDIF
-- Microphone
-- Line
-- Digital audio interface
+Every endpoint currently reports:
 
-This closely reproduces the endpoint-category families recovered from the official SB1815 INF and confirms that the X4-specific package should target `USB\VID_041E&PID_3278&MI_03` while retaining Microsoft `usbaudio2` as the function driver.
+`PKEY_AudioEndpoint_Association = GUID_NULL`
 
-Current bare `usbaudio2` state has no `FX` or `EP` subtree in the inspected devnode/driver/audio-interface/topology-interface registry locations. The Stage A0 APO therefore is not currently attached to AudioDG; this is not an APO DLL failure.
-
-## Current blocking ambiguity — Headphone endpoint association
-
-The live KS topology did **not** expose a `KSNODETYPE_HEADPHONES` category.
-
-The official Creative SB1815 Win11 INF nevertheless has a distinct `FX\1` Headphone entry using the same SFX/MFX/EFX CLSIDs as Speaker.
+No separate Headphones MMDevice exists in the bare `usbaudio2` state.
 
 Therefore:
 
-- do not treat `FX\n` as a live KS pin number;
-- do not guess that `FX\1` maps to KS pin 1;
-- do not activate the review package yet.
+- do not treat Creative `FX\1` as KS pin 1;
+- do not invent a Headphone endpoint;
+- keep Headphone out of the first live package gate.
 
-The exact Headphone endpoint association must be recovered from MMDevice endpoint properties / official `PKEY_AudioEndpoint_Association` and `PKEY_FX_Association` semantics.
+## Current gate — Stage A1 Speaker-only package OFFLINE validation
 
-## Immediate priority 1 — run dedicated read-only MMDevice endpoint probe
+Package directory:
 
-Probe source:
+`packaging/x4-apo-arm64-stage-a1-speaker`
 
-`src/x4-mmdevice-endpoint-probe-arm64`
+Files:
+
+- `X4ApoArm64.inf`
+- `X4ApoSpeakerExtension.inf`
+- `README.md`
 
 Manual workflow:
 
-`Build X4 MMDevice Endpoint Probe ARM64`
+`Build X4 APO ARM64 Stage A1 Speaker Package`
 
-The workflow is `workflow_dispatch` only and is exposed from `main` while checking out `exp/windows-arm64-x4-native-controller` source.
+The workflow is `workflow_dispatch` only and is exposed from `main` while checking out this controller branch.
 
-Artifact contents:
+### Stage A1 scope
 
-- `x4-mmdevice-endpoint-probe.exe`
-- `RUN-MMDEVICE-ENDPOINT-PROBE.cmd`
-- `README.md`
+Only the directly proven render Speaker path is targeted.
 
-Run `RUN-MMDEVICE-ENDPOINT-PROBE.cmd` on the ARM64 X4 machine and return:
+The extension:
 
-`X4_MMDEVICE_ENDPOINT_REPORT.txt`
+- matches `USB\VID_041E&PID_3278&MI_03`;
+- creates component identity `VEN_NPKR&CID_X4APO`;
+- reuses the proven KSCATEGORY_AUDIO reference string `msft_topo`;
+- adds only `FX\0`;
+- sets `PKEY_FX_Association = KSNODETYPE_SPEAKER`;
+- binds the native Stage A0 SFX/MFX/EFX CLSIDs;
+- advertises only `AUDIO_SIGNALPROCESSINGMODE_DEFAULT`.
 
-For each X4 MMDevice endpoint it reports, read-only:
+The APO component INF targets:
 
-1. endpoint ID;
-2. render/capture data flow;
-3. endpoint state;
-4. `PKEY_AudioEndpoint_Association`;
-5. `PKEY_AudioEndpoint_FormFactor`.
+`SWC\VEN_NPKR&CID_X4APO`
 
-The required result is an exact Speaker/Headphone/Microphone association map. No registry/property/CTCDC write is performed.
+and registers the three native ARM64 COM/APO classes with the Windows 11 `AudioProcessingObject` class model.
 
-Microsoft documents `PKEY_AudioEndpoint_Association` as a `VT_LPWSTR` KS pin-category GUID and `PKEY_AudioEndpoint_FormFactor` as a `VT_UI4` `EndpointFormFactor` value.
+### Required offline gate
 
-## Immediate priority 2 — finalize pass-through test package only after association is exact
+The workflow must:
 
-Review directory:
+1. rebuild `X4ApoArm64.dll` Release ARM64;
+2. verify machine `0xAA64`;
+3. run WDK `InfVerif` on `X4ApoArm64.inf`;
+4. run WDK `InfVerif` on `X4ApoSpeakerExtension.inf`;
+5. upload the artifact only if all checks pass.
 
-`packaging/x4-apo-arm64-review`
+Do **not** install the Stage A1 artifact yet.
 
-Keep `.inx.review` non-installing until Headphone/Speaker/Microphone associations are exact.
+If `InfVerif` fails, fix only the exact INF diagnostics and rerun this gate.
 
-Then:
+## After Stage A1 InfVerif PASS
 
-1. choose final software-component identity;
-2. generate unique ExtensionId;
-3. wire `AddComponent` to the X4 MI_03 extension;
-4. attach only Speaker/Headphone/Microphone pass-through SFX/MFX/EFX metadata;
-5. build/sign/verify package;
-6. test rollback before enabling any DSP.
+Only then prepare an explicit signed/test-install package and rollback procedure for the Speaker-only pass-through runtime gate.
 
-First live runtime gate:
+First live goal:
 
-`PnP package -> APO registration -> endpoint FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
+`PnP package -> APO software component -> X4 msft_topo Speaker FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
 
 Success criteria:
 
-- Speaker/Headphone/Microphone remain functional;
-- no AudioDG crash or audio loss;
+- existing Speaker endpoint remains functional;
+- no AudioDG crash;
+- no audio loss;
 - native ARM64 APO loads in the live graph;
 - pass-through remains transparent;
-- uninstall restores bare Microsoft `usbaudio2` state.
+- rollback restores the original bare Microsoft `usbaudio2` state.
 
 ## Fixed exclusions
 
-- no Creative DSP yet
+- no Headphone in A1
+- no Microphone in A1
+- no SPDIF/DDL
+- no Creative DSP
 - no Creative FX property writes
 - no CTCDC writes
-- no SPDIF/DDL
 - no CTUSBWrap/DGFX
-- no Creative UpperFilter replacement without separate evidence
+- no Creative UpperFilter
 - no B5 ASIO changes
 
 ## Safety
@@ -152,7 +149,5 @@ Success criteria:
 - one variable at a time
 - no manual FX registry writes
 - no `regsvr32`
-- no live APO install while Headphone association is unresolved
-- no blind `0x95` probing
-- no generic `0x23` probing
+- no live package install before the Stage A1 InfVerif gate passes
 - no unrelated changes
