@@ -10,15 +10,14 @@ Use GitHub as source of truth and verify the actual branch HEAD before work.
 
 ## Read first
 
-1. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
-2. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
-3. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
-4. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-5. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+1. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
+2. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
+3. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
+4. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+5. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+6. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
 
-## Architecture state
-
-Three Windows-side control paths are now separated:
+## Current architecture
 
 ### A. Firmware / CTCDC
 
@@ -28,7 +27,7 @@ Confirmed live examples:
 - Graphic EQ via PlaybackManager `0x96` params `9..20`
 - AudioControl discovery/mute via `0x21/0x22/0x24`
 
-Do not repeat blind `0x95` VoiceInputManager probing.
+Do not repeat blind `0x95` VoiceInputManager probing or generic `0x23` index probing.
 
 ### B. Normal Windows mixer
 
@@ -39,7 +38,7 @@ Direct ARM64 implementation is known:
 - Mic Boost -> `KSNODETYPE_VOLUME + IAudioVolumeLevel`
 - Mic AGC -> `KSNODETYPE_AGC + IAudioAutoGainControl`
 
-Do not port/load the supplied x86 MalLgcy/CTAudEp binaries for this subset.
+Do not port/load x86 MalLgcy/CTAudEp for this subset.
 
 ### C. Creative effects / CrystalVoice
 
@@ -47,89 +46,124 @@ Official control plane:
 
 `Creative Platform -> IAudioSystemEffectsPropertyStore -> Creative APO`
 
-Property type schema and key ranges are statically recovered.
+The exact SB1815 property schema and Win11 endpoint SFX/MFX/EFX bindings are statically recovered.
 
-The actual DSP is implemented in `CTUSBAPO64.dll`.
+The original `CTUSBAPO64.dll` is x86-64 only and is not a viable direct in-process payload for native ARM64 AudioDG.
 
-## SB1815 INF result — exact endpoint binding
+## Stage A0 implementation — created, not yet built
 
-Supplied `ctusbaud.inf`:
+Source:
 
-- SHA-256 `adc7b2128b9d90625efab36c6fc499d8d8f4328e368265f03222cf6720b98b0b`
-- DriverVer `09/26/2024,3.06.03.00`
-- X4 HWID `USB\VID_041E&PID_3278&MI_03`
+`src/x4-apo-arm64`
 
-The package has x86/amd64 install sections only. There is no ARM64 target.
+Manual workflow:
 
-Primary Creative APO CLSIDs:
+`.github/workflows/build-x4-apo-arm64-stage-a0.yml`
+
+Workflow name:
+
+`Build X4 APO ARM64 Stage A0`
+
+Implemented classes use the official X4 identities:
 
 - SFX `{71DAB6A1-39F3-423E-90A8-032729851157}`
 - MFX `{C624D7B2-8333-448E-85C8-51EEFC2025ED}`
 - EFX `{EC2F4B76-6AE1-4DB9-8FF6-344B74CF9650}`
 
-Windows 11 SB1815 bindings:
+All three currently share a transparent `CBaseAudioProcessingObject` implementation.
 
-| Path | Official FX |
-|---|---|
-| Speaker | Creative SFX/MFX/EFX |
-| Headphone | same Creative SFX/MFX/EFX |
-| Microphone | same Creative SFX/MFX/EFX |
-| Line In | Microsoft effects |
-| What U Hear | Creative SFX/MFX only |
-| SPDIF Out | Creative SFX + chainer MFX/EFX + Creative EFX + DGFX/DDL chain |
+Stage A0 deliberately contains:
 
-Windows 11 Creative FX contexts:
+- no Creative DSP algorithms;
+- no property-store writes;
+- no controllable effects;
+- no endpoint/registry installation;
+- no CTCDC access;
+- no SPDIF/DDL;
+- no B5 changes.
 
-- general `{852311BC-1AFB-454E-92CA-C35252CACAAF}`
-- headphone `{3F5F306B-A033-4F19-843D-1C44A736FF4D}`
-- each has `Default`, `Volatile`, `User` property stores
+The real-time path follows SYSVAD constraints:
 
-## ARM64 APO hosting — resolved direction
+- float32 input/output;
+- no allocation/blocking/COM/property/logging in `APOProcess`;
+- AVRT code placement;
+- AVRT vtable placement;
+- transparent frame copy / silence propagation only.
 
-The official `CTUSBAPO64.dll` is plain x86-64 and the INF has no `ntarm64` path.
+Initialization accepts SystemEffects3/2/1 and currently only caches processing mode plus endpoint identity. Creative FX User/Default/Volatile stores are intentionally unopened until the endpoint/context selection predicate is implemented.
 
-Custom APOs are in-process COM DLLs in the Windows audio engine. A native Arm64 process cannot directly load a plain x64 DLL; Arm64X only helps when an actual Arm64 view/implementation exists.
+### Critical status
 
-Therefore **do not attempt to register the original x64 CTUSBAPO64.dll directly into native ARM64 AudioDG as the final solution.**
+**No successful Stage A0 build exists yet.**
 
-## Immediate priority 1 — minimal ARM64 APO skeleton
+The manual workflow was added but the currently connected GitHub tool cannot dispatch a new `workflow_dispatch` run. Do not claim the DLL compiles or loads until an actual run is performed.
 
-Start the first implementation milestone narrowly:
+## Immediate priority 1 — build validation
 
-1. keep Microsoft `usbaudio2` as base audio driver;
-2. create an ARM64-native APO package/extension for Windows 11;
-3. initially support the X4 Speaker/Headphone/Microphone SFX/MFX/EFX binding model only;
-4. implement required Windows APO COM interfaces and registration/discovery;
-5. implement `IAudioSystemEffectsPropertyStore` consumption/notification compatible with the recovered Creative key schema;
-6. provide the equivalent EffectNodeInfo/product identity needed for Creative Platform discovery where appropriate;
-7. keep the initial build read-only/pass-through DSP until graph loading is proven.
+Run the manual workflow:
 
-Do **not** implement effect setters/DSP algorithms in the first graph-loading milestone.
+`Build X4 APO ARM64 Stage A0`
 
-For current Windows 11 packaging, prefer an `AudioProcessingObject`-class APO package/extension as documented by Microsoft rather than copying the legacy x64 Creative MEDIA-INF deployment literally.
+Then:
 
-## Immediate priority 2 — isolate DSP modules
+1. inspect actual compiler/linker output;
+2. fix only real build errors;
+3. keep all DSP/property/setter functionality disabled;
+4. verify output PE machine `0xAA64`;
+5. record DLL SHA-256 and artifact.
 
-After the ARM64 APO can load/pass audio safely, split DSP work by function:
+Do not create an installable endpoint-binding package before this gate succeeds.
 
-Playback first candidates:
+## Immediate priority 2 — componentized package review only after build
+
+After a clean ARM64 DLL build, prepare a **non-installing `.inx` review template**, based on Microsoft's current componentized APO model:
+
+1. Extension package associates an APO software component using `AddComponent`.
+2. `AudioProcessingObject`-class software-component package installs the ARM64 DLL, COM registration and `AudioEngine\AudioProcessingObjects` registration.
+3. X4 endpoint FX bindings must reproduce the recovered SB1815 Speaker/Headphone/Microphone graph only.
+
+Do not initially include:
+
+- SPDIF/DDL;
+- CTUSBWrap/DGFX;
+- Creative UpperFilter replacement;
+- live registry modification;
+- automatic installation.
+
+The initial package must remain a review template until the base Microsoft `usbaudio2` interface/component matching is proven correct.
+
+## Later priority — context/property discovery
+
+Only after pass-through graph loading works:
+
+1. recover/implement exact general-vs-headphone FX context selection;
+2. open the correct `IAudioSystemEffectsPropertyStore` read-only;
+3. register endpoint-property notifications;
+4. validate Creative Platform repository discovery;
+5. only then add one DSP feature at a time.
+
+Do not fake `CEffectNodeInfo` or APO HW identifier 100 until its exact interface contract is recovered or a simpler Windows-native discovery path is proven sufficient.
+
+## DSP split after graph validation
+
+Playback candidates:
 
 - Crystalizer
 - Surround
 - SVM
 
-Capture first candidates:
+Capture candidates:
 
 - Noise Reduction
 - AEC
 - MicBeam / Voice Focus
 - Mic Smart Volume
 
-Do not merge all effects into one initial implementation step.
+Keep these separate; do not implement all DSP at once.
 
 ## Separate later track — SPDIF / Dolby Digital Live
 
-Do not include SPDIF/DDL in the first APO milestone.
+Do not include SPDIF/DDL in Stage A0.
 
 Official SB1815 SPDIF graph additionally uses:
 
@@ -142,7 +176,7 @@ Official SB1815 SPDIF graph additionally uses:
 
 Treat this as a separate port after normal render/capture APO hosting works.
 
-## APO property schema — important fixed facts
+## APO property schema — fixed facts
 
 - bool -> `VT_BOOL`
 - float -> `VT_R4`
@@ -154,25 +188,24 @@ Examples:
 - Crystalizer Level 0..1, step 0.01, default 0.65
 - NR Strength 0..1, 0.01, default 0.5
 - Surround Immersion 0..1, 0.01, default 0.4
-- SVM mode is float values 0.0 / 1.0 / 2.0
-- XBass APO strength is 0..100 step 1 default 50
+- SVM mode = float 0.0 / 1.0 / 2.0
+- XBass APO strength = 0..100 step 1 default 50
 
-Do not replace these with guessed integer formats.
+Do not substitute guessed integer encodings.
 
 ## Remaining CDC AudioLevel task
 
 CDC Game/Voice raw UInt16 engineering-unit conversion remains unresolved.
 
-Do not search MalLgcy, CTAudEp or APO property paths for this conversion again unless a concrete reference proves relevance.
-
-Only continue by finding a real App/UI consumer of `CDCGameVoice`, `GameAudioLevel` or `ChatAudioLevel` values.
+Do not search MalLgcy, CTAudEp or APO property paths for it again unless a concrete reference proves relevance. Only continue by finding a real App/UI consumer of `CDCGameVoice`, `GameAudioLevel` or `ChatAudioLevel`.
 
 ## Safety
 
 - Creative App fully closed for independent CTCDC tests.
 - One variable at a time.
-- First APO implementation milestone must be pass-through/read-only.
-- Do not issue new hardware state changes automatically.
-- Do not repeat generic `0x23` probing or blind `0x95` probing.
-- Do not modify B5 ASIO from this branch.
-- Do not change unrelated paths.
+- Stage A0 remains pass-through/read-only.
+- No hardware state changes automatically.
+- No installable APO binding until build/package review gates pass.
+- No generic `0x23` probing or blind `0x95` probing.
+- No B5 ASIO modifications.
+- No unrelated changes.
