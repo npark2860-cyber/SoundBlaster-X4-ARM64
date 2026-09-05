@@ -10,14 +10,15 @@ Use GitHub as source of truth and verify the actual branch HEAD before work.
 
 ## Read first
 
-1. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
-2. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-3. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
-4. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+1. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
+2. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+3. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+4. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+5. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
 
 ## Current architecture — recovered
 
-The controller work now has three distinct Windows-side control paths that must not be conflated.
+Keep these Windows-side control paths separate.
 
 ### A. CTCDC firmware
 
@@ -27,6 +28,8 @@ Confirmed examples:
 - firmware Graphic EQ via PlaybackManager `0x96` params `9..20`;
 - AudioControl descriptor/range/mute discovery via `0x21/0x22/0x24`;
 - official `0x23` Platform usage is Game/Voice-indexed, not generic Windows mixer control.
+
+Do not repeat broad raw probing.
 
 ### B. Native Windows mixer
 
@@ -51,114 +54,149 @@ Do not port/load the supplied x86 MalLgcy/CTAudEp binaries into the ARM64 contro
 
 ### C. Creative effects / CrystalVoice / non-EQ Acoustic Engine
 
-Static recovery from the supplied exact binaries now shows:
+Recovered official Windows control path:
 
 `Creative App / Platform`
 -> `ApoDeviceRepoKeyFactory`
 -> `PropStoreRepository`
 -> `IAudioSystemEffectsPropertyStore::OpenUserPropertyStore`
 -> `IPropertyStore::GetValue/SetValue`
--> Windows Audio System Effects notification path
--> `CTUSBAPO64.dll` DSP modules
+-> Windows Audio System Effects notification
+-> `CTUSBAPO64.dll` DSP
 
-This is the primary recovered Windows path for features such as:
+This is the primary recovered Windows path for Crystalizer, Surround, Smart Volume/SVM, Noise Reduction, AEC, MicBeam, Mic SVM and VoiceFX.
 
-- Crystalizer;
-- Surround / CMSS-style processing;
-- Smart Volume / SVM;
-- Noise Reduction;
-- AEC;
-- Mic Beam;
-- Mic SVM;
-- VoiceFX.
+Raw `VoiceInputManager (0x95)` no-response is therefore not proof that these features are globally unsupported.
 
-Therefore the raw `VoiceInputManager (0x95)` no-response must not be interpreted as global CrystalVoice unsupported proof.
+## APO property schema — static recovery complete
 
-## Supplied APO/backend binaries
+Full trace:
 
-- `Creative.Platform.CoreAudio.dll`
-  - SHA-256 `189ee6750a7e70f24421f1e2100fa88847878456f11233e28ed2fa0a6d1d4823`
-  - managed Core Audio / Audio System Effects COM interop layer
-- `CTUSBAPO64.dll`
-  - SHA-256 `fa23a53861087df19487497c54067128f61a266cce2eae000f1a40b8752a17d3`
-  - x86-64 native Creative APO with effect implementations
-- `CTUSBfilt64.sys`
-  - SHA-256 `bc0140f821b4d2f83405a6e89b135f98b0df690b6fdefbab47c47d7ae8856105`
-  - x86-64 supporting WDM audio filter / forwarding component
+`DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
 
-`CTUSBfilt64.sys` is not the high-level effect property/DSP implementation recovered here. The actual Crystalizer/NR/AEC/MicBeam/SVM/etc modules are visibly present in `CTUSBAPO64.dll`.
+### SB1815 APO support gate
 
-## APO property-store control — direct static proof
+Endpoint APO-definition PROPERTYKEY family:
 
-The exact `Creative.Platform.Devices.dll` contains:
+`{f1056047-b091-4d85-a5c0-b13d4d8bac57}`
 
-- `Features.Apo.ApoDeviceRepoKeyFactory`;
-- `Features.Apo.PropStoreRepository`;
-- `Models.Apo.ApoDeviceRepositoryInitializer`.
+- Render PID `0`
+- Capture PID `1`
 
-`ApoDeviceRepoKeyFactory` references approximately 158 Creative `CTPKEY_*` fields.
+`APODeviceFilter` reads the direction-specific endpoint property and evaluates the returned APO information against Creative's supported-model mapping.
 
-`PropStoreRepository` directly calls:
+Recovered table:
 
-- `IAudioSystemEffectsPropertyStore::OpenUserPropertyStore`;
-- `IPropertyStore::GetValue`;
-- `IPropertyStore::SetValue`;
-- `IAudioSystemEffectsPropertyStore::RegisterPropertyChangeNotification`.
+- APO hardware identifier `100` -> `SB1815`
 
-Selected exact key examples:
+This describes the official support predicate. It does not prove that the current Microsoft USB Audio 2.0 ARM64 endpoint is presently configured with that property.
 
-| Feature | PROPERTYKEY |
+### Repository types relevant to current work
+
+- `Apo = 1`
+- `CDC = 3`
+- `HID = 5`
+- `Mixer = 6`
+
+### Official PropStore value encodings
+
+`PropStoreRepository` writes:
+
+- Boolean -> `VT_BOOL (11)`
+- Single/float -> `VT_R4 (4)`
+- float[] -> `VT_VECTOR | VT_R4 (0x1004)`
+- string -> `VT_LPWSTR (31)`
+
+Do not use arbitrary DWORD types for APO toggles or levels.
+
+### Smart Volume / SVM mode
+
+SVM mode is definitively float / `VT_R4`:
+
+- Normal = `0.0`
+- Loud = `1.0`
+- Night = `2.0`
+
+`CTPKEY_DynamX_SVM_Mode`:
+
+`{e6ec3743-ddd2-4817-8466-b433761dcf9d}, PID 0`
+
+### XBass range correction
+
+The feature enricher checks repository presence explicitly.
+
+- APO present -> XBass Strength `0..100`, step `1`, default `50`
+- HID-only -> XBass Strength `0..1`, step `0.01`, default `0.5`
+
+This is the opposite of an earlier tentative intuition and is now statically resolved.
+
+APO XBass Strength key:
+
+`{dd527e35-21a5-4ca6-ab90-8ad464fb55e3}, PID 0`
+
+### Recovered X4-relevant parameter ranges
+
+| Parameter | Range / step / default |
 |---|---|
-| Crystalizer Enable | `{3cd83c04-868f-4f08-8d75-b4625ffe3b31}, PID 0` |
-| Crystalizer Level | `{0f03f0bb-72c7-4ec1-8422-7b8d7410694a}, PID 0` |
-| SVM Enable | `{9ad782d7-f46e-465c-8df5-3cda75424987}, PID 0` |
-| AEC Enable | `{35f00393-1adf-43ce-84cb-7a926ac012b6}, PID 0` |
-| Noise Reduction Enable | `{40d0d021-20bd-4d15-a93c-1dbe8922c642}, PID 1` |
-| MicBeam Plus Enable | `{40d0d021-20bd-4d15-a93c-1dbe8922c642}, PID 0` |
-| TD Noise Reduction family | `{e370f545-381e-4961-9a94-7f97aafa77d7}, PID 0..5` |
-| Graphic EQ Enable | `{9a9d0cb2-4dc9-494c-8210-9848ae1aa629}, PID 0` |
-| APO Direct Mode Enable | `{f3eaf467-52bd-4853-baa0-82d23a8759f5}, PID 0` |
+| Crystalizer Level | `0..1`, `0.01`, `0.65` |
+| Crystalizer PreAttenuation | `0..1`, `0.01`, `1.0` |
+| Noise Reduction Strength | `0..1`, `0.01`, `0.5` |
+| Mic Smart Volume Strength | `0..1`, `0.01`, `0.74` |
+| Surround Immersion | `0..1`, `0.01`, `0.4` |
+| Dialog Plus Strength | `0..1`, `0.01`, `0.05` |
+| Voice Focus / MicBeam wedge | `20..180`, step `1`, default `30` |
+| Bass crossover | `10..1000`, step `1`, default `80` |
 
-These GUIDs are also present in the supplied `CTUSBAPO64.dll`, directly tying Platform repository keys to the native APO.
+Enable properties use `VT_BOOL`; the listed numeric parameters use `VT_R4`.
 
-Full table and module/CLSID details are in:
+VoiceFX uses common GUID `{f7e70860-8eb1-4c6a-b2e1-1033b409ff5d}`, Enable PID 99 (`VT_BOOL`), and parameter PIDs 0..7 (`VT_R4`). See the property-schema trace for exact min/max/default values.
 
-`DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+## Immediate priority 1 — recover Creative APO registration / endpoint binding
 
-## Immediate priority 1 — X4-specific APO key/product selection
+The property schema itself is now sufficiently resolved. Do not spend another turn re-deriving the same ranges.
 
-Do **not** create another broad runtime probe.
+Next static target:
 
-The next static task is to determine which APO property family and effect registrations the X4 endpoint actually selects.
+1. recover installation/INF or endpoint registration that binds the Creative APO CLSIDs to SB1815 render/capture endpoints;
+2. determine which SFX/MFX/EFX/AEC positions SB1815 actually registers;
+3. identify the exact endpoint properties used for those registrations;
+4. inventory native DLL/model/config dependencies needed by the X4-relevant APO modules.
 
-Trace:
+Known APO CLSIDs from the supplied binary include:
 
-1. `ApoDeviceRepositoryInitializer` product/endpoint initialization;
-2. `ApoDeviceRepoKeyFactory` selection logic;
-3. feature enrichers/support predicates for SB1815/X4;
-4. endpoint property/INF registration for SFX/MFX/EFX/AEC positions;
-5. exact `PROPVARIANT` type, scale, range and default for each X4-relevant key.
+- GFX `{CA854A19-6601-407B-8AFB-CB5C2801AFE6}`
+- LFX `{DA3AD2CF-79F9-41B7-BE44-753ADEEC2EDD}`
+- SFX `{71DAB6A1-39F3-423E-90A8-032729851157}`
+- MFX `{C624D7B2-8333-448E-85C8-51EEFC2025ED}`
+- EFX `{EC2F4B76-6AE1-4DB9-8FF6-344B74CF9650}`
+- OSFX `{BD813F37-2483-4ED1-90A8-6C4587A6AACB}`
+- OMFX `{05800E59-C53F-487A-91A7-C3FB4B91B9E6}`
+- AEC MFX `{9A626D17-A2FD-40DD-876B-0F9792DE4B4F}`
 
-Do not choose a legacy/current `CTPKEY_*` family merely because its name looks appropriate. Several generations coexist in the binary.
+Binary presence alone does not prove which are registered for X4.
 
-A later read-only endpoint FX property-store enumeration is justified only after this static selection is narrowed enough to make the runtime test targeted.
+## Immediate priority 2 — Windows ARM64 APO hosting feasibility
 
-## Immediate priority 2 — APO hosting on Windows ARM64
+The controller/property-write side can be native ARM64, but property writes do not recreate the DSP.
 
-The control/UI property-write path can be reimplemented natively on ARM64 using Windows Audio System Effects COM interfaces.
+The supplied `CTUSBAPO64.dll` is x86-64 and contains the actual Creative effect algorithms.
 
-However, property writes alone do not recreate the DSP.
+Determine with official Windows APO architecture/registration evidence whether the Windows ARM64 audio engine can host this exact x86-64 APO in-process, or whether an ARM64 APO/replacement processing layer is required.
 
-The supplied `CTUSBAPO64.dll` is x86-64 and contains the actual effect modules. The current ARM64 machine lacks the configured complete Creative APO/filter stack.
+Do not infer this from normal x64 application emulation. Audio-engine APO hosting is a separate compatibility question.
 
-Determine statically/through installation metadata:
+## Targeted runtime gate — not yet automatic authorization
 
-1. how the supplied APO is registered on Creative-supported Windows systems;
-2. which FX positions/CLSIDs X4 uses;
-3. which native dependencies and model files are required;
-4. whether an ARM64-compatible processing/hosting path exists or an ARM64 replacement APO would be required.
+The recovered property schema is now precise enough to design a narrow **read-only** FX property-store inspector later.
 
-Do **not** assume either that Windows ARM64 can host this exact x64 APO or that it cannot. That compatibility point is not yet proven.
+A justified read-only inspection would:
+
+1. locate the X4 render/capture endpoint;
+2. read only the direction-specific APO-definition key;
+3. attempt Audio System Effects property-store access;
+4. read only the exact known feature keys using their recovered `PROPVARIANT` types.
+
+Do not create or run a broad property enumerator, and do not write values, until installation/registration expectations are understood.
 
 ## Remaining CDC AudioLevel task
 
@@ -170,7 +208,7 @@ Known facts:
 - `AudioControlLevelRange` carries raw `UInt16` unchanged;
 - `CDCGameVoiceFeature` does not convert it;
 - MalLgcy/CTAudEp do not consume this representation;
-- the APO property-store trace above is a separate feature path.
+- the APO property-store path is unrelated.
 
 Observed values remain compatible with signed Q8.8, but `/256` is still not confirmed.
 
@@ -195,7 +233,7 @@ Therefore:
 ## Runtime safety rules
 
 - Creative App must be fully closed for independent CTCDC runtime tests.
-- Keep read-only tests read-only unless a specific state-changing operation has exact static evidence and separate validation intent.
+- Keep runtime work read-only unless a state-changing operation has exact static evidence and separate validation intent.
 - Every new state-changing hardware command requires physical X4 confirmation.
 - `WriteFile` success alone is not hardware validation.
 - Do not repeat blind raw `0x95` probing.
