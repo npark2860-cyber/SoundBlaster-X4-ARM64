@@ -1,10 +1,10 @@
 # X4 ARM64 APO Stage A1 — Speaker-only offline package gate
 
-This directory contains the first package candidate after the Stage A0 native ARM64 DLL, offline COM, `usbaudio2` attachment and MMDevice runtime gates passed.
+This directory contains the first componentized APO package candidate after the Stage A0 native ARM64 DLL, offline COM, `usbaudio2` attachment and MMDevice runtime gates passed.
 
 ## Scope
 
-Stage A1 intentionally targets **Speaker only**.
+Stage A1 targets **Speaker only**.
 
 Included:
 
@@ -47,7 +47,7 @@ Read-only runtime evidence on the ARM64 test machine proved:
 - all current MMDevice `PKEY_AudioEndpoint_Association` values are GUID_NULL;
 - no separate Headphones MMDevice exists.
 
-Therefore the first live graph-loading test must not guess the Creative Headphone association. Speaker is the one exact common runtime/static attachment point.
+Therefore Stage A1 does not guess a Headphone association.
 
 ## Offline workflow
 
@@ -55,42 +55,57 @@ Manual workflow:
 
 `Build X4 APO ARM64 Stage A1 Speaker Package`
 
-The workflow file is exposed on `main` only so GitHub Actions can list the manual workflow. The workflow itself explicitly checks out:
+The workflow is exposed on `main` for Actions UI discovery and explicitly checks out:
 
 `exp/windows-arm64-x4-native-controller`
 
-Current workflow resolves `MSBuild.exe` with `vswhere.exe` and invokes the absolute path rather than relying on `msbuild` being present on PATH.
+## Final status — PASS
 
-The workflow must:
+Fresh workflow run:
 
-1. build `X4ApoArm64.dll` Release ARM64;
-2. verify PE machine `0xAA64`;
-3. locate WDK `InfVerif.exe`;
-4. run `InfVerif` against `X4ApoArm64.inf`;
-5. run `InfVerif` against `X4ApoSpeakerExtension.inf`;
-6. upload `SoundBlaster-X4-APO-ARM64-Stage-A1-Speaker-OFFLINE` only if all prior checks pass.
+`33958338454`
 
-## Status at 2026-09-05 handoff
+Head SHA:
 
-The earlier workflow failure `msbuild is not recognized` has been addressed by explicit `vswhere`/absolute-path MSBuild resolution.
+`e0d5565e1ae0e2f77fd141148dd9f14019588117`
 
-The user subsequently reported that a DLL was produced by the updated workflow path. This proves progress past the previous MSBuild-path failure only.
+The same fresh execution passed:
 
-**Stage A1 offline validation is not yet recorded as PASS.** Exact evidence for both InfVerif steps and the final artifact-upload step has not yet been supplied in the handoff state.
+1. Release ARM64 build;
+2. PE machine `0xAA64` verification;
+3. WDK InfVerif discovery;
+4. `InfVerif` on `X4ApoArm64.inf`;
+5. `InfVerif` on `X4ApoSpeakerExtension.inf`;
+6. final artifact upload.
 
-Do not infer InfVerif success merely from DLL creation.
+Both INF logs report:
+
+`INF is VALID`
+
+Fresh rebuilt unsigned DLL SHA-256:
+
+`5007E95F32983A4572D406671154B6417612D6FEC6F71C10012942A9AA5501A5`
+
+Artifact:
+
+`SoundBlaster-X4-APO-ARM64-Stage-A1-Speaker-OFFLINE`
+
+Artifact ID:
+
+`9967105545`
+
+Artifact ZIP SHA-256:
+
+`e719629a81690477e1f672b9b9d4e366aeb71e5b465934920d276c037ce6f6b0`
+
+Stage A1 is therefore closed **PASS**.
 
 ## Next gate
 
-**Do not install these files yet.**
+Do not install the Stage A1 offline artifact directly.
 
-First confirm one fresh workflow execution has passed:
+The separate signed/test-install + rollback package is Stage A2:
 
-- `Locate MSBuild`
-- ARM64 build
-- PE `0xAA64` check
-- `InfVerif APO component INF`
-- `InfVerif Speaker extension INF`
-- final artifact upload
+`packaging/x4-apo-arm64-stage-a2-speaker-live`
 
-Only after the complete offline INF gate passes should an explicit signed/test-install and rollback procedure be prepared.
+Its workflow must pass before any live installation is attempted.
