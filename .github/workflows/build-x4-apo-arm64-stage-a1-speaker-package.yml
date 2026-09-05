@@ -18,13 +18,33 @@ jobs:
         with:
           ref: exp/windows-arm64-x4-native-controller
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe was not found: $vswhere"
+          }
+          $install = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $install) {
+            throw "Visual Studio installation containing MSBuild was not found"
+          }
+          $tool = Join-Path $install "MSBuild\Current\Bin\MSBuild.exe"
+          if (-not (Test-Path $tool)) {
+            throw "MSBuild.exe was not found: $tool"
+          }
+          "path=$tool" >> $env:GITHUB_OUTPUT
+          "Using MSBuild: $tool"
 
       - name: Build Stage A0 APO Release ARM64
         shell: pwsh
         run: |
-          msbuild src/x4-apo-arm64/X4ApoArm64.vcxproj /m /restore /p:Configuration=Release /p:Platform=ARM64 /v:minimal
+          $msbuild = "${{ steps.msbuild.outputs.path }}"
+          & $msbuild "src/x4-apo-arm64/X4ApoArm64.vcxproj" /m /restore "/p:Configuration=Release" "/p:Platform=ARM64" /v:minimal
+          if ($LASTEXITCODE -ne 0) {
+            throw "MSBuild failed with exit code $LASTEXITCODE"
+          }
 
       - name: Stage package and verify ARM64 PE
         shell: pwsh
