@@ -12,6 +12,8 @@ extern const CLSID CLSID_X4_SFX;
 extern const CLSID CLSID_X4_MFX;
 extern const CLSID CLSID_X4_EFX;
 
+#pragma AVRT_VTABLES_BEGIN
+
 // Stage A0 deliberately implements no DSP and exposes no controllable effects.
 // The sole purpose is to prove native ARM64 APO graph loading with bit-transparent
 // pass-through processing before any Creative property-store or DSP behavior is added.
@@ -127,6 +129,8 @@ public:
 
     static const CRegAPOProperties<1> sm_RegProperties;
 };
+
+#pragma AVRT_VTABLES_END
 
 OBJECT_ENTRY_AUTO(CLSID_X4_SFX, CX4SfxApo)
 OBJECT_ENTRY_AUTO(CLSID_X4_MFX, CX4MfxApo)
