@@ -118,54 +118,97 @@ jobs:
           & "${{ steps.wdk.outputs.infverif }}" /v build/x4-apo-stage-a2-speaker-live/X4ApoSpeakerExtension.inf
           if ($LASTEXITCODE -ne 0) { throw "InfVerif failed for X4ApoSpeakerExtension.inf with exit code $LASTEXITCODE" }
 
-      - name: Create ephemeral test certificate, sign DLL, build and sign catalogs
+      - name: Create ephemeral test certificate
+        id: testcert
         shell: powershell
+        timeout-minutes: 2
         run: |
           $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
-          $signtool = "${{ steps.wdk.outputs.signtool }}"
-          $inf2cat = "${{ steps.wdk.outputs.inf2cat }}"
-
+          Write-Host "Creating Stage A2 code-signing certificate..."
           $cert = New-SelfSignedCertificate `
             -Type CodeSigningCert `
             -Subject "CN=SoundBlaster-X4-ARM64 Stage A2 Test" `
             -CertStoreLocation "Cert:\CurrentUser\My" `
+            -Provider "Microsoft Software Key Storage Provider" `
             -KeyAlgorithm RSA `
-            -KeyLength 3072 `
+            -KeyLength 2048 `
             -HashAlgorithm SHA256 `
             -KeyExportPolicy NonExportable `
             -NotAfter (Get-Date).AddDays(30)
+          if (-not $cert) { throw "New-SelfSignedCertificate returned no certificate" }
 
           Export-Certificate -Cert $cert -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") | Out-Null
-          Import-Certificate -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
-          Import-Certificate -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
+          if (-not (Test-Path (Join-Path $stage "X4ApoStageA2Test.cer"))) { throw "Certificate export failed" }
 
-          & $signtool sign /sha1 $cert.Thumbprint /s My /fd SHA256 /v (Join-Path $stage "X4ApoArm64.dll")
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+          Write-Host "Certificate created: $($cert.Thumbprint)"
+
+      - name: Sign Stage A2 APO DLL
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
+          $signtool = "${{ steps.wdk.outputs.signtool }}"
+          $thumbprint = "${{ steps.testcert.outputs.thumbprint }}"
+          & $signtool sign /sha1 $thumbprint /s My /fd SHA256 /v (Join-Path $stage "X4ApoArm64.dll")
           if ($LASTEXITCODE -ne 0) { throw "SignTool failed while signing X4ApoArm64.dll" }
+          Write-Host "DLL signing PASS"
 
+      - name: Build Stage A2 catalogs
+        shell: powershell
+        timeout-minutes: 5
+        run: |
+          $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
+          $inf2cat = "${{ steps.wdk.outputs.inf2cat }}"
           & $inf2cat "/driver:$stage" /os:10_GE_ARM64 /verbose
           if ($LASTEXITCODE -ne 0) { throw "Inf2Cat failed with exit code $LASTEXITCODE" }
+          foreach ($catalog in @('X4ApoArm64.cat', 'X4ApoSpeakerExtension.cat')) {
+            if (-not (Test-Path (Join-Path $stage $catalog))) { throw "Inf2Cat did not produce $catalog" }
+          }
+          Write-Host "Catalog generation PASS"
 
+      - name: Sign Stage A2 catalogs
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
+          $signtool = "${{ steps.wdk.outputs.signtool }}"
+          $thumbprint = "${{ steps.testcert.outputs.thumbprint }}"
           foreach ($catalog in @('X4ApoArm64.cat', 'X4ApoSpeakerExtension.cat')) {
             $path = Join-Path $stage $catalog
-            if (-not (Test-Path $path)) { throw "Inf2Cat did not produce $catalog" }
-            & $signtool sign /sha1 $cert.Thumbprint /s My /fd SHA256 /v $path
+            & $signtool sign /sha1 $thumbprint /s My /fd SHA256 /v $path
             if ($LASTEXITCODE -ne 0) { throw "SignTool failed while signing $catalog" }
           }
+          Write-Host "Catalog signing PASS"
 
+      - name: Verify Stage A2 signature ownership
+        shell: powershell
+        timeout-minutes: 2
+        run: |
+          $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
+          $thumbprint = "${{ steps.testcert.outputs.thumbprint }}"
           foreach ($file in @('X4ApoArm64.dll', 'X4ApoArm64.cat', 'X4ApoSpeakerExtension.cat')) {
             $path = Join-Path $stage $file
-            & $signtool verify /pa /v $path
-            if ($LASTEXITCODE -ne 0) { throw "SignTool verification failed for $file" }
+            $signature = Get-AuthenticodeSignature -FilePath $path
+            if (-not $signature.SignerCertificate) { throw "No Authenticode signer found for $file" }
+            if ($signature.SignerCertificate.Thumbprint -ne $thumbprint) {
+              throw "Signer thumbprint mismatch for $file: $($signature.SignerCertificate.Thumbprint)"
+            }
+            Write-Host "$file signer PASS; trust status on runner: $($signature.Status)"
           }
 
-          "Test certificate thumbprint: $($cert.Thumbprint)"
+          "Test certificate thumbprint: $thumbprint"
           "Signed DLL SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoArm64.dll') -Algorithm SHA256).Hash)"
           "APO catalog SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoArm64.cat') -Algorithm SHA256).Hash)"
           "Extension catalog SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoSpeakerExtension.cat') -Algorithm SHA256).Hash)"
 
-          Remove-Item ("Cert:\CurrentUser\TrustedPublisher\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
-          Remove-Item ("Cert:\CurrentUser\Root\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
-          Remove-Item ("Cert:\CurrentUser\My\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
+      - name: Remove ephemeral private key from runner
+        if: always() && steps.testcert.outputs.thumbprint != ''
+        shell: powershell
+        run: |
+          $thumbprint = "${{ steps.testcert.outputs.thumbprint }}"
+          Remove-Item ("Cert:\CurrentUser\My\" + $thumbprint) -Force -ErrorAction SilentlyContinue
+          Write-Host "Removed runner-private certificate key: $thumbprint"
 
       - name: Verify final Stage A2 artifact file set
         shell: pwsh
