@@ -1,0 +1,57 @@
+name: Build X4 APO ARM64 Stage A0
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 X4 APO Stage A0
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout native-controller source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-native-controller
+
+      - name: Build ARM64 Release
+        shell: pwsh
+        run: |
+          msbuild src/x4-apo-arm64/X4ApoArm64.vcxproj /m /p:Configuration=Release /p:Platform=ARM64
+
+      - name: Verify ARM64 PE
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD "src/x4-apo-arm64/ARM64/Release/X4ApoArm64.dll"
+          if (-not (Test-Path $dll)) {
+            $dll = Get-ChildItem -Path src/x4-apo-arm64 -Recurse -Filter X4ApoArm64.dll | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $dll -or -not (Test-Path $dll)) {
+            throw "X4ApoArm64.dll was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          "ARM64 PE verified: $dll"
+          "SHA256: $((Get-FileHash $dll -Algorithm SHA256).Hash)"
+
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item $dll dist/X4ApoArm64.dll
+          Copy-Item src/x4-apo-arm64/README.md dist/README.md
+
+      - name: Upload Stage A0 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-APO-ARM64-Stage-A0
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
