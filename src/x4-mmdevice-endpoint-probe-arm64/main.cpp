@@ -1,6 +1,5 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#include <initguid.h>
 #include <mmdeviceapi.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <propvarutil.h>
@@ -12,6 +11,16 @@
 
 namespace
 {
+const PROPERTYKEY kAudioEndpointFormFactor = {
+    {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}},
+    0
+};
+
+const PROPERTYKEY kAudioEndpointAssociation = {
+    {0x1da5d803, 0xd492, 0x4edd, {0x8c, 0x23, 0xe0, 0xc0, 0xff, 0xee, 0x7f, 0x0e}},
+    2
+};
+
 std::wstring ToUpper(std::wstring value)
 {
     std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
@@ -119,9 +128,9 @@ void PrintEndpoint(IMMDevice* device)
         endpoint->Release();
     }
 
-    const std::wstring association = ReadString(store, PKEY_AudioEndpoint_Association);
+    const std::wstring association = ReadString(store, kAudioEndpointAssociation);
     UINT32 formFactor = 0;
-    const bool haveFormFactor = ReadUInt32(store, PKEY_AudioEndpoint_FormFactor, &formFactor);
+    const bool haveFormFactor = ReadUInt32(store, kAudioEndpointFormFactor, &formFactor);
 
     ::wprintf(L"EndpointId:  %ls\n", endpointId != nullptr ? endpointId : L"(unavailable)");
     ::wprintf(L"Flow:        %ls\n", DataFlowName(flow));
