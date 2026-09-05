@@ -125,7 +125,7 @@ Recovered parameter model:
 | Mic EQ Bandwidths | 36..43 |
 | Mic Smart Volume | 44..45 |
 
-Runtime params `0..45` returned no response in the tested CTCDC session. This only rejects that raw route for the tested X4 session; it does not reject the Windows APO implementation described below.
+Runtime params `0..45` returned no response in the tested CTCDC session. This rejects that raw route for the tested X4 session; it does not reject the Windows APO implementation below.
 
 ## Mixer / AudioControl
 
@@ -236,9 +236,10 @@ This is a float DeviceTopology conversion and is unrelated to proving CDC UInt16
 
 ## Creative APO / CrystalVoice backend — static-confirmed
 
-Full trace:
+Full traces:
 
-`DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+- `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+- `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
 
 Recovered control plane:
 
@@ -252,40 +253,131 @@ Recovered control plane:
 
 `Creative.Platform.CoreAudio.dll` supplies the managed COM interop surface including `IAudioSystemEffectsPropertyStore` and normal Core Audio/DeviceTopology interfaces.
 
-`ApoDeviceRepoKeyFactory` references approximately 158 Creative `CTPKEY_*` values. `PropStoreRepository` directly performs user FX property-store reads/writes and registers change notification.
+### SB1815 APO support gate
+
+Endpoint APO-definition property family:
+
+`{f1056047-b091-4d85-a5c0-b13d4d8bac57}`
+
+- Render PID `0`
+- Capture PID `1`
+
+`APODeviceFilter` reads the direction-specific definition, obtains APO information, and checks Creative's supported-model table.
+
+Recovered product mapping:
+
+- APO hardware identifier `100` -> `SB1815`
+
+This is the official static support predicate. It does not prove that the current ARM64 Microsoft USB Audio endpoint is presently registered with that property.
+
+Relevant repository enum values:
+
+- Apo = 1
+- CDC = 3
+- HID = 5
+- Mixer = 6
+
+### PropStore repository value encoding
+
+| Managed value | PROPVARIANT |
+|---|---|
+| Boolean | `VT_BOOL (11)` |
+| Single/float | `VT_R4 (4)` |
+| float[] | `VT_VECTOR | VT_R4 (0x1004)` |
+| String | `VT_LPWSTR (31)` |
+
+Do not serialize APO toggles or levels as arbitrary integer values.
 
 ### Selected playback PROPERTYKEYs
 
-| Feature | GUID | PID |
-|---|---|---:|
-| CMSS3D / Surround Enable | `5b4777a4-8ad4-4d34-893a-df34da0e56ca` | 0 |
-| CMSS3D Immersion | `a5a78ea4-c156-4db7-85aa-81cff1c3f192` | 0 |
-| Crystalizer Enable | `3cd83c04-868f-4f08-8d75-b4625ffe3b31` | 0 |
-| Crystalizer Level | `0f03f0bb-72c7-4ec1-8422-7b8d7410694a` | 0 |
-| SVM Enable | `9ad782d7-f46e-465c-8df5-3cda75424987` | 0 |
-| SVM Strength | `80b0c7bb-0989-434e-af5b-fb9020f471b3` | 0 |
-| Bass Redirection | `d3dcf273-cf72-40c5-a1ab-a7785a849ea8` | 0 |
-| Bass Crossover | `836d3bc0-7c99-4e38-990f-68775abc8335` | 0 |
-| XBass Enable | `f67cf426-f8cb-4a40-bdac-580802e3e193` | 0 |
-| Graphic EQ Enable | `9a9d0cb2-4dc9-494c-8210-9848ae1aa629` | 0 |
-| APO Direct Mode | `f3eaf467-52bd-4853-baa0-82d23a8759f5` | 0 |
+| Feature | GUID | PID | Type/schema |
+|---|---|---:|---|
+| Surround Enable | `5b4777a4-8ad4-4d34-893a-df34da0e56ca` | 0 | `VT_BOOL` |
+| Surround Immersion | `a5a78ea4-c156-4db7-85aa-81cff1c3f192` | 0 | `VT_R4`, 0..1 |
+| Crystalizer Enable | `3cd83c04-868f-4f08-8d75-b4625ffe3b31` | 0 | `VT_BOOL` |
+| Crystalizer Level | `0f03f0bb-72c7-4ec1-8422-7b8d7410694a` | 0 | `VT_R4`, 0..1 |
+| SVM Enable | `9ad782d7-f46e-465c-8df5-3cda75424987` | 0 | `VT_BOOL` |
+| DynamX SVM Mode | `e6ec3743-ddd2-4817-8466-b433761dcf9d` | 0 | `VT_R4`, 0/1/2 |
+| SVM Strength | `80b0c7bb-0989-434e-af5b-fb9020f471b3` | 0 | float property |
+| Bass Redirection | `d3dcf273-cf72-40c5-a1ab-a7785a849ea8` | 0 | feature property |
+| Bass Crossover | `836d3bc0-7c99-4e38-990f-68775abc8335` | 0 | `VT_R4`, 10..1000 |
+| XBass Enable | `f67cf426-f8cb-4a40-bdac-580802e3e193` | 0 | `VT_BOOL` |
+| XBass Strength | `dd527e35-21a5-4ca6-ab90-8ad464fb55e3` | 0 | `VT_R4`, repository-aware |
+| Graphic EQ Enable | `9a9d0cb2-4dc9-494c-8210-9848ae1aa629` | 0 | `VT_BOOL` |
+| APO Direct Mode | `f3eaf467-52bd-4853-baa0-82d23a8759f5` | 0 | property path only; do not equate to CTCDC Direct Mode |
 
 Graphic EQ `Gain0..9` use GUID `2b88c76d-d07c-4e97-8922-1bac9f6d5935`, PIDs 0..9.
 
 ### Selected CrystalVoice PROPERTYKEYs
 
-| Feature | GUID | PID |
-|---|---|---:|
-| Mic SVM Enable | `400d2ef9-cec3-4c2f-ab54-4f9b47f7d615` | 0 |
-| Mic SVM Strength | `22821d29-df1d-4907-a721-4b3937542e87` | 0 |
-| AEC Enable | `35f00393-1adf-43ce-84cb-7a926ac012b6` | 0 |
-| Noise Reduction Enable | `40d0d021-20bd-4d15-a93c-1dbe8922c642` | 1 |
-| Noise Reduction Strength | `6a72f5dd-6c09-4147-82c5-14c64b0e4e0f` | 0 |
-| MicBeam Plus Enable | `40d0d021-20bd-4d15-a93c-1dbe8922c642` | 0 |
-| MicBeam Wedge Angle | `72e09675-2af9-485c-89f1-898e532bf06e` | 0 |
-| MicBeam Source Angle | `a0d4f6a1-9775-48a2-8d4d-c0441436bf60` | 0 |
-| MicBeam Gain | `8d6ddb63-253d-424e-be3b-7391722c4227` | 0 |
-| TD Noise Reduction family | `e370f545-381e-4961-9a94-7f97aafa77d7` | 0..5 |
+| Feature | GUID | PID | Type/schema |
+|---|---|---:|---|
+| Mic SVM Enable | `400d2ef9-cec3-4c2f-ab54-4f9b47f7d615` | 0 | `VT_BOOL` |
+| Mic SVM Strength | `22821d29-df1d-4907-a721-4b3937542e87` | 0 | `VT_R4` |
+| AEC Enable | `35f00393-1adf-43ce-84cb-7a926ac012b6` | 0 | `VT_BOOL` |
+| Noise Reduction Enable | `40d0d021-20bd-4d15-a93c-1dbe8922c642` | 1 | `VT_BOOL` |
+| Noise Reduction Strength | `6a72f5dd-6c09-4147-82c5-14c64b0e4e0f` | 0 | `VT_R4`, 0..1 |
+| MicBeam Plus Enable | `40d0d021-20bd-4d15-a93c-1dbe8922c642` | 0 | `VT_BOOL` |
+| MicBeam Wedge Angle | `72e09675-2af9-485c-89f1-898e532bf06e` | 0 | `VT_R4`, 20..180 |
+| MicBeam Source Angle | `a0d4f6a1-9775-48a2-8d4d-c0441436bf60` | 0 | float property |
+| MicBeam Gain | `8d6ddb63-253d-424e-be3b-7391722c4227` | 0 | float property |
+| TD Noise Reduction family | `e370f545-381e-4961-9a94-7f97aafa77d7` | 0..5 | mixed known feature properties |
+
+### Recovered effect parameter ranges/defaults
+
+| Parameter | Min | Max | Step | Default |
+|---|---:|---:|---:|---:|
+| Crystalizer Level | 0 | 1 | 0.01 | 0.65 |
+| Crystalizer PreAttenuation | 0 | 1 | 0.01 | 1.0 |
+| Noise Reduction Strength | 0 | 1 | 0.01 | 0.5 |
+| Mic Smart Volume Strength | 0 | 1 | 0.01 | 0.74 |
+| Surround Immersion | 0 | 1 | 0.01 | 0.4 |
+| Dialog Plus Strength | 0 | 1 | 0.01 | 0.05 |
+| Voice Focus / MicBeam wedge | 20 | 180 | 1 | 30 |
+| Bass crossover | 10 | 1000 | 1 | 80 |
+
+### Smart Volume / SVM mode
+
+Official repository representation is float / `VT_R4`:
+
+- Normal = 0.0
+- Loud = 1.0
+- Night = 2.0
+
+Do not store the enum as a raw integer property.
+
+### XBass repository-aware range
+
+The feature enricher explicitly checks repository availability:
+
+| Repository condition | XBass Strength |
+|---|---|
+| APO present | `0..100`, step `1`, default `50` |
+| HID-only | `0..1`, step `0.01`, default `0.5` |
+
+This is statically confirmed and corrects the earlier tentative intuition that APO would use the normalized 0..1 scale.
+
+### VoiceFX
+
+Common GUID:
+
+`{f7e70860-8eb1-4c6a-b2e1-1033b409ff5d}`
+
+- Enable PID 99 -> `VT_BOOL`
+- parameters PID 0..7 -> `VT_R4`
+
+| PID | Parameter | Min | Max | Default |
+|---:|---|---:|---:|---:|
+| 0 | FormantFreq1 | 200 | 800 | 400 |
+| 1 | FormantFreq2 | 800 | 1800 | 1400 |
+| 2 | FormantFreq3 | 1600 | 2750 | 2000 |
+| 3 | PitchFactor | 0.25 | 4 | 1 |
+| 4 | FormantFactor | 0.5 | 2 | 1 |
+| 5 | PitchVariability | -1 | 5 | 1 |
+| 6 | QuiverDepth | 0 | 0.2 | 0 |
+| 7 | ContourDepth | 0 | 0.4 | 0 |
+
+Do not invent unproven step values for VoiceFX parameters.
 
 The same selected GUIDs are physically present in `CTUSBAPO64.dll`, confirming the Platform repository and native APO belong to the same control plane.
 
@@ -330,13 +422,13 @@ No high-level CrystalVoice/Acoustic effect property repository or DSP modules we
 
 ## Current implementation implications
 
-### Safe to implement directly on ARM64
+### Safe architecture for direct ARM64 implementation
 
 - normal endpoint/channel mixer via Core Audio;
 - monitoring / Mic Boost / Mic AGC via DeviceTopology;
-- controller-side Audio System Effects property-store access, once X4-specific endpoint keys/registration are identified.
+- controller-side Audio System Effects property-store **read access**, using the exact recovered schema, once endpoint registration expectations are understood.
 
-### Not solved by controller writes alone
+### Not solved by controller property writes alone
 
 Crystalizer, SVM, Noise Reduction, AEC, MicBeam, VoiceFX and related DSP require an actual compatible APO processing layer.
 
