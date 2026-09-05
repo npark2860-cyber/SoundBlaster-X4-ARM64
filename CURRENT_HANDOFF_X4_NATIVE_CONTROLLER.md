@@ -17,22 +17,23 @@ Always verify the actual branch HEAD before continuing. Do not reconstruct state
 ## Read order
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
-2. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
-3. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
-4. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
-5. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-6. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
-7. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
-8. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
-9. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
-10. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-11. `X4_CONTROL_MAP.md`
-12. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
-13. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
+2. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
+3. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
+4. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
+5. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+6. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+7. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+8. `DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+9. `DEBUG_HISTORY_20260905_X4_MIXER_DRILLDOWN_RUNTIME_SUCCESS.md`
+10. `DEBUG_HISTORY_20260904_X4_READONLY_CAPABILITY_RUNTIME_SUCCESS.md`
+11. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+12. `X4_CONTROL_MAP.md`
+13. `DEBUG_HISTORY_20260903_WINDOWS_CTCDC_PATH.md`
+14. `DEBUG_HISTORY_20260903_CTCDC_NATIVE_UNLOCK_TRACE.md`
 
 ## Scope boundary
 
-This branch is for X4 Windows ARM64 native controller / driver-path analysis.
+This branch is for X4 Windows ARM64 native controller / driver-path analysis and the isolated ARM64 APO restoration track.
 
 Keep it separate from B5 ASIO. Do not modify B5 ASIO source, WaveRT engine, mux, failsafe or control-panel behavior from this branch.
 
@@ -213,39 +214,92 @@ Headphone context:
 
 INF creates `Default`, `Volatile` and `User` stores, directly corroborating the recovered `IAudioSystemEffectsPropertyStore` path.
 
-## ARM64 APO conclusion — now resolved
+## ARM64 APO conclusion — resolved
 
 The supplied official package has no ARM64 install target, and `CTUSBAPO64.dll` is plain x86-64 PE32+.
 
-Microsoft documents APOs as in-process COM DLLs loaded by the Windows audio engine. Windows-on-Arm binary-loading rules state that a classic Arm64 process loads Arm64 binaries (or the Arm64 view of an Arm64X binary); plain x64/Arm64EC DLLs are not directly loadable into a classic Arm64 process.
+Custom APOs are in-process COM DLLs in the Windows audio engine. A native Arm64 process cannot directly load a plain x64 DLL; Arm64X helps only when an actual Arm64 view/implementation exists.
 
 Therefore the supplied x64 `CTUSBAPO64.dll` is **not** a viable direct in-process payload for native ARM64 AudioDG.
 
-The correct first restoration architecture is:
+Correct architecture:
 
-1. retain Microsoft USB Audio 2.0 as the base driver;
-2. build/install an ARM64-native APO extension/package;
-3. reproduce the SB1815 Speaker/Headphone/Microphone SFX/MFX/EFX bindings;
-4. preserve the recovered Creative FX property-store schema;
-5. port/reimplement the required DSP processing in ARM64 APO classes;
+1. retain Microsoft USB Audio 2.0 as base driver;
+2. provide ARM64-native APO component/extension packaging;
+3. reproduce SB1815 Speaker/Headphone/Microphone SFX/MFX/EFX bindings;
+4. preserve the recovered Creative FX property schema;
+5. port/reimplement required DSP later;
 6. keep SPDIF/DDL separate because its official graph depends on chainer/DGFX components.
 
-Arm64X is only useful if an actual ARM64 implementation exists for its Arm64 view; it does not magically execute the original x64 APO DSP inside native Arm64 AudioDG.
+## ARM64 APO Stage A0 — implementation created, build pending
+
+Canonical implementation history:
+
+`DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
+
+Source:
+
+`src/x4-apo-arm64`
+
+Manual workflow:
+
+`Build X4 APO ARM64 Stage A0`
+
+Workflow file:
+
+`.github/workflows/build-x4-apo-arm64-stage-a0.yml`
+
+Current Stage A0 classes use the official X4 CLSIDs:
+
+- `CX4SfxApo` -> SFX
+- `CX4MfxApo` -> MFX
+- `CX4EfxApo` -> EFX
+
+All three currently share one transparent `CBaseAudioProcessingObject` implementation.
+
+Stage A0 behavior is deliberately constrained:
+
+- native ARM64 target only;
+- float32 pass-through processing only;
+- no DSP algorithms;
+- no Creative property-store writes;
+- no controllable effects advertised;
+- no effect-state setters;
+- no CTCDC access;
+- no registry/endpoint installation path;
+- no SPDIF/DDL;
+- no B5 changes.
+
+`APOProcess` contains no allocation, COM, property access, logging or blocking work. Both real-time code and APO vtables use the SYSVAD `AVRT_CODE` / `AVRT_VTABLES` placement pattern.
+
+`Initialize` accepts `APOInitSystemEffects3/2/1`; the SystemEffects3 path only caches processing mode and endpoint identity. It intentionally does not open the Creative FX property store because Speaker and Headphone share the same APO CLSIDs but use different context GUIDs.
+
+### Critical validation status
+
+**Stage A0 has not been compiled yet.**
+
+A manual `workflow_dispatch` build workflow exists and verifies ARM64 PE machine `0xAA64`, but the currently connected GitHub action set cannot start a new manual workflow run. Do not report Stage A0 as build-successful until an actual run exists.
+
+No installable APO INF/extension package exists yet. Do not install/bind Stage A0 to the live X4 endpoint before the DLL builds cleanly and packaging is separately reviewed.
 
 ## Immediate next actions
 
-1. Design a **minimal read-only/native ARM64 APO skeleton** for SB1815 using the official Speaker/Headphone/Mic SFX/MFX/EFX registrations. No effect setters yet.
-2. Determine the minimum APO interfaces/initialization/property-notification behavior needed to reproduce Creative Platform discovery (`EffectNodeInfo`, APO HW id 100, Audio System Effects contexts).
-3. Determine which Creative DSP modules can be independently reimplemented/ported first; Crystalizer/Surround/SVM playback and NR/AEC/MicBeam capture should remain separated.
-4. Keep SPDIF/DDL, CTUSBWrap/DGFX and kernel-filter-specific behavior out of the first APO milestone.
-5. Continue CDC Game/Voice UInt16 conversion only when an actual UI/App consumer is found.
+1. Run `Build X4 APO ARM64 Stage A0` manually and capture compiler/linker output.
+2. Fix only real build errors; keep Stage A0 pass-through/no-state-change.
+3. Verify produced DLL PE machine is `0xAA64`.
+4. Only after clean build, create a **non-installing review `.inx` template** for Windows 11 componentized APO packaging.
+5. Do not bind/install on the live endpoint until the component/extension package is reviewed.
+6. After graph-loading validation, add endpoint-context selection and read-only FX property access before any DSP or setters.
+7. Keep SPDIF/DDL/CTUSBWrap/DGFX outside the first APO milestone.
+8. Continue CDC Game/Voice UInt16 conversion only when a concrete App/UI consumer is found.
 
 ## Runtime safety
 
 - Creative App closed for independent CTCDC tests.
 - One variable at a time.
-- Read-only until exact static evidence and explicit validation intent exist.
-- Every new state-changing hardware command needs physical confirmation.
+- Stage A0 must remain pass-through/read-only until graph loading is validated.
+- Every new state-changing hardware operation requires separate physical confirmation.
 - No blind `0x95` probing.
+- No generic `0x23` probing.
 - No unrelated changes.
 - No B5 ASIO changes from this branch.
