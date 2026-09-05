@@ -10,169 +10,153 @@ Use GitHub as source of truth and verify actual branch HEAD before work.
 
 ## Closed gates
 
-### Stage A0 — PASSED
+### Stage A0 — PASS
 
-Native ARM64 `X4ApoArm64.dll` has passed:
+Native ARM64 pass-through APO binary and offline COM gates are closed.
 
-- Release ARM64 build;
-- PE machine `0xAA64` verification;
-- export/CLSID/AVRT binary inspection;
-- offline ARM64 COM class-factory/object/interface probe for SFX/MFX/EFX;
-- final `DllCanUnloadNow == S_OK`.
+### usbaudio2 attachment — PASS
 
-### `usbaudio2` attachment discovery — PASSED
-
-Read-only runtime evidence proves the X4 audio function is:
+X4 audio HWID:
 
 `USB\VID_041E&PID_3278&MI_03`
 
-with:
+Base service:
 
-- class `MEDIA`;
-- service `usbaudio2`;
-- KSCATEGORY_AUDIO `msft_wave`;
-- KSCATEGORY_AUDIO `msft_topo`;
-- KSCATEGORY_TOPOLOGY `msft_topo`.
+`usbaudio2`
 
-The current bare `usbaudio2` interface/device keys contain no inspected `FX` or `EP` subtree.
+Runtime topology interface:
 
-Runtime `msft_topo` pin categories include Speaker, SPDIF, Microphone, Line and Digital Audio Interface.
+`KSCATEGORY_AUDIO\msft_topo`
 
-### MMDevice endpoint association discovery — PASSED
+### MMDevice association — PASS
 
-Canonical record:
+Six active X4 endpoints were observed; all report `PKEY_AudioEndpoint_Association = GUID_NULL`.
 
-`DEBUG_HISTORY_20260905_X4_MMDEVICE_ENDPOINT_ASSOCIATION_RUNTIME_SUCCESS.md`
+No separate Headphones MMDevice exists in the bare Microsoft stack.
 
-Six active X4 endpoints were found:
+### Stage A1 Speaker-only OFFLINE package — PASS
 
-- Render Speakers
-- Render SPDIF
-- Capture Microphone
-- Capture UnknownDigitalPassthrough
-- Capture SPDIF
-- Capture LineLevel
+Fresh workflow run:
 
-All currently report:
+`33958338454`
 
-`PKEY_AudioEndpoint_Association = GUID_NULL`
+All required steps passed in one run, including both InfVerif checks and final artifact upload.
 
-No separate Headphones MMDevice exists in the bare `usbaudio2` state.
-
-Therefore:
-
-- do not treat Creative `FX\1` as KS pin 1;
-- do not invent a Headphone endpoint;
-- keep Headphone out of the first package/runtime gate.
-
-## Current gate — Stage A1 Speaker-only package OFFLINE validation
-
-Canonical record:
-
-`DEBUG_HISTORY_20260905_X4_APO_STAGE_A1_SPEAKER_PACKAGE_OFFLINE_GATE.md`
-
-Package directory:
-
-`packaging/x4-apo-arm64-stage-a1-speaker`
-
-Files:
-
-- `X4ApoArm64.inf`
-- `X4ApoSpeakerExtension.inf`
-- `README.md`
-
-Manual workflow:
-
-`Build X4 APO ARM64 Stage A1 Speaker Package`
-
-The workflow is `workflow_dispatch` only. The workflow file is exposed on `main` for GitHub Actions UI discovery, but the actual build explicitly checks out this controller branch.
-
-### Stage A1 scope
-
-Only the directly proven render Speaker path is targeted.
-
-The extension:
-
-- matches `USB\VID_041E&PID_3278&MI_03`;
-- keeps Microsoft `usbaudio2` as base function driver;
-- reuses `KSCATEGORY_AUDIO` reference string `msft_topo`;
-- adds only `FX\0`;
-- sets `PKEY_FX_Association = KSNODETYPE_SPEAKER`;
-- binds Stage A0 native ARM64 SFX/MFX/EFX CLSIDs;
-- advertises only `AUDIO_SIGNALPROCESSINGMODE_DEFAULT`.
-
-APO component identity:
-
-`SWC\VEN_NPKR&CID_X4APO`
-
-### Workflow state at handoff
-
-The initial Stage A1 workflow failed before compilation because bare `msbuild` was not available on PATH.
-
-Current workflow now:
-
-1. finds Visual Studio with `vswhere.exe`;
-2. resolves `MSBuild\Current\Bin\MSBuild.exe`;
-3. invokes MSBuild by absolute path.
-
-The user subsequently reported that the updated path produced a DLL.
-
-This closes only the previous MSBuild-path failure. It does **not** yet prove the whole Stage A1 offline gate.
-
-Do not mark Stage A1 PASS until the exact workflow evidence confirms both InfVerif steps and the final upload step.
-
-## Immediate action in the next tab
-
-First inspect/obtain the result of the latest **fresh** workflow execution of:
-
-`Build X4 APO ARM64 Stage A1 Speaker Package`
-
-Do not confuse a historical `Re-run jobs` attempt with the current workflow definition.
-
-Required step results:
-
-1. `Locate MSBuild` -> PASS
-2. `Build Stage A0 APO Release ARM64` -> PASS
-3. `Stage package and verify ARM64 PE` -> PASS, machine `0xAA64`
-4. `Locate WDK InfVerif` -> PASS
-5. `InfVerif APO component INF` -> PASS
-6. `InfVerif Speaker extension INF` -> PASS
-7. `Upload offline Stage A1 package artifact` -> PASS
-
-Artifact name when complete:
+Artifact:
 
 `SoundBlaster-X4-APO-ARM64-Stage-A1-Speaker-OFFLINE`
 
-Expected artifact contents:
+Artifact ID:
+
+`9967105545`
+
+Canonical record:
+
+`DEBUG_HISTORY_20260905_X4_APO_STAGE_A1_OFFLINE_PASS_STAGE_A2_SIGNED_LIVE_PREP.md`
+
+## Current gate — Stage A2 signed Speaker-only live-test package
+
+Package directory:
+
+`packaging/x4-apo-arm64-stage-a2-speaker-live`
+
+Workflow:
+
+`Build X4 APO ARM64 Stage A2 Speaker Live Test`
+
+The workflow is `workflow_dispatch` only and explicitly checks out the controller branch.
+
+Stage A2 retains the Stage A1 attachment model unchanged:
+
+- `USB\VID_041E&PID_3278&MI_03`
+- Microsoft `usbaudio2`
+- `KSCATEGORY_AUDIO\msft_topo`
+- Speaker `FX\0` only
+- `PKEY_FX_Association = KSNODETYPE_SPEAKER`
+- native ARM64 SFX/MFX/EFX
+- default processing mode only
+- pass-through only
+
+No Headphone, Mic, SPDIF/DDL, Creative DSP, Creative FX setter, CTCDC write, Creative filter replacement or B5 ASIO work is included.
+
+## Immediate action
+
+Run one fresh manual execution of:
+
+`Build X4 APO ARM64 Stage A2 Speaker Live Test`
+
+Required PASS steps:
+
+1. `Locate MSBuild`
+2. `Build Stage A0 APO Release ARM64`
+3. `Stage A2 package and verify ARM64 PE`
+4. `Parse Stage A2 PowerShell runner`
+5. `Locate WDK validation and signing tools`
+6. `InfVerif APO component INF`
+7. `InfVerif Speaker extension INF`
+8. `Create ephemeral test certificate, sign DLL, build and sign catalogs`
+9. `Verify final Stage A2 artifact file set`
+10. `Upload signed Stage A2 Speaker live-test artifact`
+
+Expected artifact:
+
+`SoundBlaster-X4-APO-ARM64-Stage-A2-Speaker-LIVE-TEST`
+
+Expected exact files:
 
 - `X4ApoArm64.dll`
 - `X4ApoArm64.inf`
+- `X4ApoArm64.cat`
 - `X4ApoSpeakerExtension.inf`
+- `X4ApoSpeakerExtension.cat`
+- `X4ApoStageA2Test.cer`
+- `X4ApoStageA2.ps1`
 - `README.md`
 
-If InfVerif fails, fix only the exact INF diagnostic and rerun this offline gate. Do not expand scope.
+If any Stage A2 workflow step fails, fix only that exact build/signing/catalog diagnostic. Do not install and do not expand endpoint scope.
 
-## After Stage A1 offline PASS
+## After Stage A2 workflow PASS
 
-Only then prepare an explicit signed/test-install package and rollback procedure for the Speaker-only pass-through runtime gate.
+Run from an elevated PowerShell in the extracted artifact directory:
 
-First live goal:
+`powershell -ExecutionPolicy Bypass -File .\X4ApoStageA2.ps1 -Action Preflight`
 
-`PnP package -> APO software component -> X4 msft_topo Speaker FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
+Preflight must confirm:
 
-Success criteria:
+- native ARM64 host
+- exactly one X4 MI_03 present
+- base service `usbaudio2`
+- Secure Boot disabled
+- Windows TESTSIGNING enabled
+- valid dedicated Stage A2 signer/certificate match
+- no previous Stage A2 package already in Driver Store
 
-- existing Speaker endpoint remains functional;
-- no AudioDG crash;
-- no audio loss;
-- native ARM64 APO loads in the live graph;
-- pass-through remains transparent;
-- rollback restores the original bare Microsoft `usbaudio2` state.
+Only after Preflight PASS:
 
-## Fixed exclusions
+`powershell -ExecutionPolicy Bypass -File .\X4ApoStageA2.ps1 -Action Install`
 
-- no Headphone in A1
-- no Microphone in A1
+Then:
+
+`powershell -ExecutionPolicy Bypass -File .\X4ApoStageA2.ps1 -Action Verify`
+
+First live target:
+
+`PnP package -> APO software component -> X4 msft_topo Speaker FX binding -> AudioDG load -> transparent Speaker audio`
+
+If the live gate fails or audio becomes unstable, use:
+
+`powershell -ExecutionPolicy Bypass -File .\X4ApoStageA2.ps1 -Action Rollback`
+
+Rollback removes only the recorded Stage A2 packages/certificate and verifies the X4 MI_03 base service returns/remains `usbaudio2`.
+
+## Fixed safety boundary
+
+- no manual FX registry writes
+- no `regsvr32`
+- no live install before Stage A2 signed-package workflow PASS
+- no automatic Secure Boot/BCD changes
+- no Headphone
+- no Microphone
 - no SPDIF/DDL
 - no Creative DSP
 - no Creative FX property writes
@@ -180,11 +164,3 @@ Success criteria:
 - no CTUSBWrap/DGFX
 - no Creative UpperFilter
 - no B5 ASIO changes
-
-## Safety
-
-- one variable at a time
-- no manual FX registry writes
-- no `regsvr32`
-- no live package install before Stage A1 offline validation is conclusively PASS
-- no unrelated changes
