@@ -3,7 +3,7 @@
 #include <audioenginebaseapo.h>
 #include <audioengineextensionapo.h>
 
-#include <cstdio>
+#include <cwchar>
 
 using DllGetClassObjectFn = HRESULT (STDAPICALLTYPE*)(REFCLSID, REFIID, LPVOID*);
 using DllCanUnloadNowFn = HRESULT (STDAPICALLTYPE*)();
@@ -23,7 +23,7 @@ static const ApoClassCase kClasses[] =
 
 static void PrintHr(const wchar_t* label, HRESULT hr)
 {
-    std::wprintf(L"  %-42ls 0x%08lX %ls\n",
+    ::wprintf(L"  %-42ls 0x%08lX %ls\n",
         label,
         static_cast<unsigned long>(hr),
         SUCCEEDED(hr) ? L"PASS" : L"FAIL");
@@ -46,9 +46,9 @@ int wmain(int argc, wchar_t** argv)
 {
     const wchar_t* dllPath = argc >= 2 ? argv[1] : L"X4ApoArm64.dll";
 
-    std::wprintf(L"X4 APO ARM64 Stage A0 offline COM probe\n");
-    std::wprintf(L"DLL: %ls\n\n", dllPath);
-    std::wprintf(L"This probe does not register the DLL, touch an audio endpoint, or call APO Initialize.\n\n");
+    ::wprintf(L"X4 APO ARM64 Stage A0 offline COM probe\n");
+    ::wprintf(L"DLL: %ls\n\n", dllPath);
+    ::wprintf(L"This probe does not register the DLL, touch an audio endpoint, or call APO Initialize.\n\n");
 
     const HRESULT coHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(coHr))
@@ -61,7 +61,7 @@ int wmain(int argc, wchar_t** argv)
     if (module == nullptr)
     {
         const DWORD error = GetLastError();
-        std::wprintf(L"LoadLibraryW failed: Win32 error %lu (0x%08lX)\n", error, error);
+        ::wprintf(L"LoadLibraryW failed: Win32 error %lu (0x%08lX)\n", error, error);
         CoUninitialize();
         return 3;
     }
@@ -73,7 +73,7 @@ int wmain(int argc, wchar_t** argv)
 
     if (getClassObject == nullptr || canUnloadNow == nullptr)
     {
-        std::wprintf(L"Required COM exports are missing.\n");
+        ::wprintf(L"Required COM exports are missing.\n");
         FreeLibrary(module);
         CoUninitialize();
         return 4;
@@ -83,7 +83,7 @@ int wmain(int argc, wchar_t** argv)
 
     for (const auto& test : kClasses)
     {
-        std::wprintf(L"[%ls]\n", test.name);
+        ::wprintf(L"[%ls]\n", test.name);
 
         IClassFactory* factory = nullptr;
         HRESULT hr = getClassObject(test.clsid, IID_IClassFactory, reinterpret_cast<void**>(&factory));
@@ -91,7 +91,7 @@ int wmain(int argc, wchar_t** argv)
         if (FAILED(hr) || factory == nullptr)
         {
             allPassed = false;
-            std::wprintf(L"\n");
+            ::wprintf(L"\n");
             continue;
         }
 
@@ -119,7 +119,7 @@ int wmain(int argc, wchar_t** argv)
         }
 
         factory->Release();
-        std::wprintf(L"\n");
+        ::wprintf(L"\n");
     }
 
     const HRESULT unloadHr = canUnloadNow();
@@ -132,6 +132,6 @@ int wmain(int argc, wchar_t** argv)
     FreeLibrary(module);
     CoUninitialize();
 
-    std::wprintf(L"\nRESULT: %ls\n", allPassed ? L"PASS" : L"FAIL");
+    ::wprintf(L"\nRESULT: %ls\n", allPassed ? L"PASS" : L"FAIL");
     return allPassed ? 0 : 1;
 }
