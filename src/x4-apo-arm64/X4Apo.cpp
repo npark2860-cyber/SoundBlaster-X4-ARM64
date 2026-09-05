@@ -1,38 +1,40 @@
-#include <initguid.h>
-
 #include "X4Apo.h"
 
 // Creative X4/SB1815 APO CLSIDs recovered from ctusbaud.inf.
-DEFINE_GUID(CLSID_X4_SFX,
-    0x71dab6a1, 0x39f3, 0x423e, 0x90, 0xa8, 0x03, 0x27, 0x29, 0x85, 0x11, 0x57);
-DEFINE_GUID(CLSID_X4_MFX,
-    0xc624d7b2, 0x8333, 0x448e, 0x85, 0xc8, 0x51, 0xee, 0xfc, 0x20, 0x25, 0xed);
-DEFINE_GUID(CLSID_X4_EFX,
-    0xec2f4b76, 0x6ae1, 0x4db9, 0x8f, 0xf6, 0x34, 0x4b, 0x74, 0xcf, 0x96, 0x50);
+// Keep normal C++ linkage so the address can be used as the ATL non-type
+// template argument declared in X4Apo.h without DEFINE_GUID linkage ambiguity.
+const CLSID CLSID_X4_SFX =
+    {0x71dab6a1, 0x39f3, 0x423e, {0x90, 0xa8, 0x03, 0x27, 0x29, 0x85, 0x11, 0x57}};
+const CLSID CLSID_X4_MFX =
+    {0xc624d7b2, 0x8333, 0x448e, {0x85, 0xc8, 0x51, 0xee, 0xfc, 0x20, 0x25, 0xed}};
+const CLSID CLSID_X4_EFX =
+    {0xec2f4b76, 0x6ae1, 0x4db9, {0x8f, 0xf6, 0x34, 0x4b, 0x74, 0xcf, 0x96, 0x50}};
+
+#pragma warning(disable : 4815)
 
 const AVRT_DATA CRegAPOProperties<1> CX4SfxApo::sm_RegProperties(
     CLSID_X4_SFX,
     L"Sound Blaster X4 ARM64 Pass-through SFX",
     L"SoundBlaster-X4-ARM64 project",
-    0,
     1,
-    __uuidof(IAudioSystemEffects));
+    0,
+    __uuidof(IAudioProcessingObject));
 
 const AVRT_DATA CRegAPOProperties<1> CX4MfxApo::sm_RegProperties(
     CLSID_X4_MFX,
     L"Sound Blaster X4 ARM64 Pass-through MFX",
     L"SoundBlaster-X4-ARM64 project",
-    0,
     1,
-    __uuidof(IAudioSystemEffects));
+    0,
+    __uuidof(IAudioProcessingObject));
 
 const AVRT_DATA CRegAPOProperties<1> CX4EfxApo::sm_RegProperties(
     CLSID_X4_EFX,
     L"Sound Blaster X4 ARM64 Pass-through EFX",
     L"SoundBlaster-X4-ARM64 project",
-    0,
     1,
-    __uuidof(IAudioSystemEffects));
+    0,
+    __uuidof(IAudioProcessingObject));
 
 CX4PassThroughApoBase::CX4PassThroughApoBase(
     const APO_REG_PROPERTIES* registrationProperties)
@@ -118,6 +120,11 @@ void CX4PassThroughApoBase::APOProcess(
 
 HRESULT CX4PassThroughApoBase::Initialize(UINT32 dataSize, BYTE* data)
 {
+    if (m_bIsInitialized)
+    {
+        return APOERR_ALREADY_INITIALIZED;
+    }
+
     if ((data == nullptr && dataSize != 0) || (data != nullptr && dataSize == 0))
     {
         return E_INVALIDARG;
