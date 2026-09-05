@@ -192,7 +192,7 @@ jobs:
             $signature = Get-AuthenticodeSignature -FilePath $path
             if (-not $signature.SignerCertificate) { throw "No Authenticode signer found for $file" }
             if ($signature.SignerCertificate.Thumbprint -ne $thumbprint) {
-              throw "Signer thumbprint mismatch for $file: $($signature.SignerCertificate.Thumbprint)"
+              throw "Signer thumbprint mismatch for ${file}: $($signature.SignerCertificate.Thumbprint)"
             }
             Write-Host "$file signer PASS; trust status on runner: $($signature.Status)"
           }
