@@ -1,0 +1,65 @@
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = Extension
+ClassGuid   = {e2f84ce7-8efa-411c-aa69-97454ca4cb57}
+Provider    = %ProviderName%
+ExtensionId = {169E3811-27B2-4DFD-BF99-DB6BD8AC3ED8}
+DriverVer   = 09/05/2026,0.2.0.0
+CatalogFile = X4ApoSpeakerExtension.cat
+PnpLockDown = 1
+
+[Manufacturer]
+%MfgName% = X4Extensions,NTARM64.10.0...22000
+
+[X4Extensions.NTARM64.10.0...22000]
+%Device.ExtensionDesc% = X4_Extension_Install,USB\VID_041E&PID_3278&MI_03
+
+[X4_Extension_Install]
+
+[X4_Extension_Install.Components]
+AddComponent = X4Apo,,X4Apo_AddComponent
+
+[X4Apo_AddComponent]
+ComponentIDs = VEN_NPKR&CID_X4APO
+Description  = "Sound Blaster X4 ARM64 Stage A2 Test APO"
+
+[X4_Extension_Install.Interfaces]
+AddInterface = %KSCATEGORY_AUDIO%,%KSNAME_Topology%,X4_Speaker_Topology_Interface
+
+[X4_Speaker_Topology_Interface]
+AddReg = X4_Speaker_FX_AddReg
+
+[X4_Speaker_FX_AddReg]
+; Stage A2 keeps the already-validated Stage A1 Speaker-only binding unchanged.
+HKR,"FX\0",%PKEY_FX_Association%,,%KSNODETYPE_SPEAKER%
+HKR,"FX\0",%PKEY_FX_StreamEffectClsid%,,%X4_SFX_CLSID%
+HKR,"FX\0",%PKEY_FX_ModeEffectClsid%,,%X4_MFX_CLSID%
+HKR,"FX\0",%PKEY_FX_EndpointEffectClsid%,,%X4_EFX_CLSID%
+HKR,"FX\0",%PKEY_SFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\0",%PKEY_MFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+HKR,"FX\0",%PKEY_EFX_ProcessingModes_Supported_For_Streaming%,%REG_MULTI_SZ%,%AUDIO_SIGNALPROCESSINGMODE_DEFAULT%
+
+[Strings]
+MfgName              = "SoundBlaster-X4-ARM64 project"
+ProviderName         = "SoundBlaster-X4-ARM64 project"
+Device.ExtensionDesc = "Sound Blaster X4 ARM64 Stage A2 Speaker APO Extension"
+
+KSCATEGORY_AUDIO = "{6994AD04-93EF-11D0-A3CC-00A0C9223196}"
+KSNAME_Topology  = "msft_topo"
+KSNODETYPE_SPEAKER = "{DFF21CE1-F70F-11D0-B917-00A0C9223196}"
+
+X4_SFX_CLSID = "{71DAB6A1-39F3-423E-90A8-032729851157}"
+X4_MFX_CLSID = "{C624D7B2-8333-448E-85C8-51EEFC2025ED}"
+X4_EFX_CLSID = "{EC2F4B76-6AE1-4DB9-8FF6-344B74CF9650}"
+
+PKEY_FX_Association       = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},0"
+PKEY_FX_StreamEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},5"
+PKEY_FX_ModeEffectClsid   = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},6"
+PKEY_FX_EndpointEffectClsid = "{D04E05A6-594B-4FB6-A80D-01AF5EED7D1D},7"
+
+PKEY_SFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},5"
+PKEY_MFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},6"
+PKEY_EFX_ProcessingModes_Supported_For_Streaming = "{D3993A3F-99C2-4402-B5EC-A92A0367664B},7"
+
+AUDIO_SIGNALPROCESSINGMODE_DEFAULT = "{C18E2F7E-933D-4965-B7D1-1EEF228D2AF3}"
+REG_MULTI_SZ = 0x00010000
