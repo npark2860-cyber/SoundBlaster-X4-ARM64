@@ -12,21 +12,30 @@ Controller branch:
 
 `exp/windows-arm64-x4-native-controller`
 
-Always verify actual branch HEAD before continuing. Keep this branch separate from B5 ASIO; do not modify B5 ASIO source, WaveRT engine, mux, failsafe or control-panel behavior here.
+Verified code/workflow baseline immediately before this handoff refresh:
+
+`e0d5565e1ae0e2f77fd141148dd9f14019588117`
+
+Always verify the actual branch HEAD before continuing because the handoff-document commits themselves advance HEAD.
+
+Keep this branch separate from B5 ASIO. Do not modify B5 ASIO source, WaveRT engine, mux, failsafe, runtime control-panel behavior, or unrelated paths from this workstream.
 
 ## Read order
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
-2. `DEBUG_HISTORY_20260905_X4_USBAUDIO2_ATTACHMENT_RUNTIME_SUCCESS.md`
-3. `DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
-4. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
-5. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
-6. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
-7. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
-8. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
-9. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-10. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-11. `packaging/x4-apo-arm64-review/README.md`
+2. `DEBUG_HISTORY_20260905_X4_APO_STAGE_A1_SPEAKER_PACKAGE_OFFLINE_GATE.md`
+3. `DEBUG_HISTORY_20260905_X4_MMDEVICE_ENDPOINT_ASSOCIATION_RUNTIME_SUCCESS.md`
+4. `DEBUG_HISTORY_20260905_X4_USBAUDIO2_ATTACHMENT_RUNTIME_SUCCESS.md`
+5. `DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
+6. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
+7. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
+8. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
+9. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
+10. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+11. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+12. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+13. `packaging/x4-apo-arm64-stage-a1-speaker/README.md`
+14. `packaging/x4-apo-arm64-review/README.md`
 
 ## Architecture boundary
 
@@ -37,17 +46,19 @@ Keep four backend classes distinct:
 3. Creative APO/filter DSP processing
 4. Creative App/profile orchestration
 
+Do not collapse these into one generic Creative command path.
+
 ## Fixed firmware / mixer facts
 
 - CTCDC: `USB\VID_041E&PID_3278&MI_01`
-- validated firmware `1.9.251008.0930`
+- validated firmware: `1.9.251008.0930`
 - Direct Mode hardware-confirmed:
   - ON `5A 39 03 00 05 01`
   - OFF `5A 39 03 00 05 00`
-- raw `0x96` exposed Graphic EQ only in tested session
-- raw `0x95` no-response is not global CrystalVoice unsupported proof
-- generic `0x23` probing must not be repeated
-- CDC UInt16 engineering-unit conversion remains unresolved
+- raw PlaybackManager `0x96` exposed Graphic EQ only in the tested session
+- raw VoiceInputManager `0x95` no-response is not global CrystalVoice unsupported proof
+- generic raw `0x23` probing must not be repeated
+- CDC UInt16 engineering-unit conversion remains unresolved; `/256` is not confirmed
 
 Normal ARM64 Windows mixer path remains standard Core Audio / DeviceTopology:
 
@@ -56,7 +67,7 @@ Normal ARM64 Windows mixer path remains standard Core Audio / DeviceTopology:
 - Mic Boost -> `KSNODETYPE_VOLUME + IAudioVolumeLevel`
 - Mic AGC -> `KSNODETYPE_AGC + IAudioAutoGainControl`
 
-Do not port supplied x86 MalLgcy/CTAudEp for this subset.
+Do not port/load supplied x86 MalLgcy/CTAudEp for this subset.
 
 ## Creative APO control plane — recovered
 
@@ -108,7 +119,7 @@ Headphone context:
 
 `{3F5F306B-A033-4F19-843D-1C44A736FF4D}`
 
-## ARM64 APO Stage A0 — binary + COM gates PASSED
+## ARM64 APO Stage A0 — PASSED
 
 Source:
 
@@ -118,13 +129,13 @@ Validated DLL:
 
 - size `176640`
 - SHA-256 `136aaa68e83a952e19b786526dae76ce026b3641b8cf84f13bbbe9df9152abcd`
-- PE32+ ARM64 / `0xAA64`
-- `DllGetClassObject`, `DllCanUnloadNow`
+- PE32+ ARM64 / machine `0xAA64`
+- exports `DllGetClassObject`, `DllCanUnloadNow`
 - exact official SFX/MFX/EFX CLSIDs present
-- `RT_CODE`, `RT_CONST`, `RT_DATA` present
+- AVRT sections `RT_CODE`, `RT_CONST`, `RT_DATA` present
 - no Creative x64 DLL imports
 
-Offline native ARM64 COM probe result:
+Offline native ARM64 COM probe:
 
 `RESULT: PASS`
 
@@ -135,7 +146,7 @@ For SFX/MFX/EFX independently:
 - QI APO/RT/Configuration/SystemEffects/SystemEffects2/SystemEffects3/Notifications -> PASS
 - final `DllCanUnloadNow` -> `S_OK`
 
-This proves isolated native ARM64 APO COM structure but not live AudioDG graph loading.
+This proves isolated native ARM64 APO COM structure, not yet live AudioDG graph loading.
 
 ## ARM64 `usbaudio2` attachment runtime — PASSED
 
@@ -164,68 +175,122 @@ Confirmed:
 - `KSNODETYPE_LINE_CONNECTOR`
 - `KSNODETYPE_DIGITAL_AUDIO_INTERFACE`
 
-This strongly matches the official SB1815 topology families and confirms that an X4 extension should continue to target `USB\VID_041E&PID_3278&MI_03` while retaining Microsoft `usbaudio2`.
+Read-only inspection found no `FX` or `EP` subtrees in the examined device/driver/audio-interface/topology-interface registry locations. Therefore the missing live Creative graph is an attachment/metadata problem, not an ARM64 APO DLL-load proof failure.
 
-### Current bare stack has no FX metadata
+## MMDevice endpoint association runtime — PASSED
 
-Read-only inspection found no `FX` or `EP` subtrees in:
+Canonical record:
 
-- device hardware key
-- driver/software key
-- KSCATEGORY_AUDIO interface keys
-- KSCATEGORY_TOPOLOGY interface key
+`DEBUG_HISTORY_20260905_X4_MMDEVICE_ENDPOINT_ASSOCIATION_RUNTIME_SUCCESS.md`
 
-Therefore the absence of live Creative effects is an attachment/endpoint-metadata issue, not an ARM64 APO DLL failure.
+Six active X4 MMDevice endpoints were found:
 
-### Remaining blocking ambiguity — Headphone
+| Flow | FormFactor | PKEY_AudioEndpoint_Association |
+|---|---|---|
+| Render | Speakers | GUID_NULL |
+| Render | SPDIF | GUID_NULL |
+| Capture | Microphone | GUID_NULL |
+| Capture | UnknownDigitalPassthrough | GUID_NULL |
+| Capture | SPDIF | GUID_NULL |
+| Capture | LineLevel | GUID_NULL |
 
-No `KSNODETYPE_HEADPHONES` category appeared in the live KS topology dump.
+Every endpoint was active (`0x00000001`).
 
-The official Creative INF still has a separate `FX\1` Headphone binding.
+No distinct Headphones MMDevice exists in the current bare Microsoft `usbaudio2` state.
 
-Therefore:
+Consequences:
 
-- do not equate `FX\n` with KS pin number;
-- do not assume `FX\1 = pin 1`;
-- do not activate the review INF yet.
+- do not equate Creative `FX\1` with KS pin 1;
+- do not invent a Headphone endpoint;
+- keep Headphone out of the first live gate;
+- Speaker is the one exact common runtime/static attachment point for Stage A1.
 
-The Headphone endpoint association must be recovered from MMDevice endpoint properties / `PKEY_AudioEndpoint_Association` and compared against official `PKEY_FX_Association` semantics.
+## Current gate — Stage A1 Speaker-only package OFFLINE validation
 
-## Package review status — still NON-INSTALLING
+Package directory:
 
-Directory:
+`packaging/x4-apo-arm64-stage-a1-speaker`
 
-`packaging/x4-apo-arm64-review`
+Files:
 
-Files remain `.inx.review` and must not be installed.
+- `X4ApoArm64.inf`
+- `X4ApoSpeakerExtension.inf`
+- `README.md`
 
-The component review follows Windows 11 `Class=AudioProcessingObject` packaging. The extension review matches X4 MI_03 and records the recovered Speaker/Headphone/Microphone FX payload, but that payload is deliberately not wired into the install section yet.
+Workflow:
+
+`Build X4 APO ARM64 Stage A1 Speaker Package`
+
+Workflow file exists on `main` only for Actions UI discovery, but the workflow itself explicitly checks out:
+
+`exp/windows-arm64-x4-native-controller`
+
+### Stage A1 scope
+
+Only Speaker is targeted.
+
+The extension candidate:
+
+- matches `USB\VID_041E&PID_3278&MI_03`;
+- retains Microsoft `usbaudio2` as base function driver;
+- reuses the proven KSCATEGORY_AUDIO topology reference string `msft_topo`;
+- adds only Speaker `FX\0` metadata;
+- uses `PKEY_FX_Association = KSNODETYPE_SPEAKER`;
+- binds Stage A0 native ARM64 SFX/MFX/EFX CLSIDs;
+- advertises only `AUDIO_SIGNALPROCESSINGMODE_DEFAULT`;
+- excludes Headphone/Mic/SPDIF/DDL/DSP/CTCDC/Creative filter replacements.
+
+APO software-component identity:
+
+`SWC\VEN_NPKR&CID_X4APO`
+
+### Current workflow state
+
+The first Stage A1 workflow attempt failed before compiling because bare `msbuild` was not on PATH.
+
+A later workflow revision now resolves `MSBuild.exe` explicitly with `vswhere.exe` and executes the absolute path. Current workflow source reflects that fix.
+
+The user subsequently reported that a DLL was produced from the updated Stage A1 workflow path. This is evidence that the build progressed past the previous `msbuild not recognized` failure.
+
+However, **do not mark Stage A1 offline validation PASS yet**. No exact evidence has yet been supplied that both of these completed successfully in the same run:
+
+- `InfVerif` on `X4ApoArm64.inf`
+- `InfVerif` on `X4ApoSpeakerExtension.inf`
+
+The workflow uploads the final offline artifact only after those checks. Before any installation work, confirm the current run reached the final upload step or otherwise obtain the exact InfVerif result.
 
 ## Immediate next action
 
-1. Perform one more read-only MMDevice property dump for all X4 endpoints.
-2. Identify at minimum:
-   - `PKEY_AudioEndpoint_Association`
-   - `PKEY_AudioEndpoint_FormFactor`
-   - endpoint/device-interface identity
-   - Speaker vs Headphone differentiation
-   - Microphone association
-3. Compare association values with official SB1815 `PKEY_FX_Association` data.
-4. Only then finalize a pass-through-only live extension/APO package.
-5. First live gate is only:
+1. Verify the latest fresh `Build X4 APO ARM64 Stage A1 Speaker Package` execution, not an old `Re-run jobs` attempt.
+2. Confirm in that execution:
+   - `Locate MSBuild` PASS
+   - ARM64 APO build PASS
+   - PE machine `0xAA64` PASS
+   - `InfVerif APO component INF` PASS
+   - `InfVerif Speaker extension INF` PASS
+   - final offline artifact upload PASS
+3. If InfVerif fails, fix only the exact diagnostic and rerun one gate.
+4. If the full offline gate passes, then prepare a separate explicit signed/test-install + rollback package for Speaker-only pass-through.
+5. First live runtime goal remains:
 
-`PnP -> APO registration -> endpoint FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
+`PnP package -> APO software component -> X4 msft_topo Speaker FX binding -> AudioDG Load/Initialize/LockForProcess/APOProcess -> transparent audio`
 
-No DSP or setters until that passes.
+No DSP/setters until that live gate passes.
 
-## Safety
+## Safety / fixed exclusions
 
 - one variable at a time
 - no manual FX registry writes
 - no `regsvr32`
-- no live APO install while Headphone association is unresolved
-- no CTCDC writes in APO work
-- no SPDIF/DDL in first milestone
+- no live package install until Stage A1 offline validation is conclusively PASS
+- no Headphone in A1
+- no Microphone in A1
+- no SPDIF/DDL
+- no Creative DSP
+- no Creative FX property writes
+- no CTCDC writes
+- no CTUSBWrap/DGFX
+- no Creative UpperFilter replacement
 - no blind `0x95`
 - no generic `0x23`
 - no unrelated changes
