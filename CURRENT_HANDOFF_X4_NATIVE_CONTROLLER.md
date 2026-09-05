@@ -17,15 +17,17 @@ Always verify actual branch HEAD before work. Keep this branch separate from B5 
 ## Read order
 
 1. `CURRENT_HANDOFF_X4_NATIVE_CONTROLLER.md`
-2. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
-3. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
-4. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
-5. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
-6. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
-7. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
-8. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
-9. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
-10. `X4_CONTROL_MAP.md`
+2. `DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
+3. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_BINARY_VALIDATION.md`
+4. `DEBUG_HISTORY_20260905_X4_ARM64_APO_STAGE_A0_IMPLEMENTATION.md`
+5. `DEBUG_HISTORY_20260905_X4_SB1815_INF_APO_BINDING_ARM64_TRACE.md`
+6. `DEBUG_HISTORY_20260905_X4_APO_PROPERTY_SCHEMA_STATIC_TRACE.md`
+7. `DEBUG_HISTORY_20260905_X4_APO_CRYSTALVOICE_BACKEND_STATIC_TRACE.md`
+8. `DEBUG_HISTORY_20260905_CTAUDEP_WINDOWS_MIXER_NATIVE_TRACE.md`
+9. `DEBUG_HISTORY_20260905_X4_AUDIOLEVEL_STATIC_TRACE.md`
+10. `NEXT_ACTION_X4_NATIVE_CONTROLLER.md`
+11. `X4_CONTROL_MAP.md`
+12. `packaging/x4-apo-arm64-review/README.md`
 
 ## Architecture boundary
 
@@ -103,6 +105,8 @@ Windows 11 X4 bindings:
 - What U Hear -> Creative SFX/MFX
 - SPDIF Out -> separate chainer/DGFX/DDL path; keep out of first milestone
 
+All official X4 Speaker/Headphone/Microphone SFX/MFX/EFX streaming-mode lists contain only `AUDIO_SIGNALPROCESSINGMODE_DEFAULT`.
+
 FX property contexts:
 
 - general `{852311BC-1AFB-454E-92CA-C35252CACAAF}`
@@ -112,7 +116,7 @@ FX property contexts:
 
 The original `CTUSBAPO64.dll` is plain x86-64 and cannot be the direct in-process payload for native ARM64 AudioDG. The restoration path is an ARM64-native APO while retaining Microsoft USB Audio 2.0 as the base audio driver.
 
-## ARM64 APO Stage A0 — build/binary gate PASSED
+## ARM64 APO Stage A0 — binary gate PASSED
 
 Source:
 
@@ -121,8 +125,6 @@ Source:
 Stage A0 contains native ARM64 pass-through SFX/MFX/EFX classes using the official X4 CLSIDs. It has no Creative DSP, no FX writes, no CTCDC access, no endpoint installation and no SPDIF/DDL.
 
 The first real build initially failed because ATL's object factory creates wrapper/aggregation classes derived from the COM class while SFX/MFX/EFX had been declared `final`. The fix removed only `final` from those three ATL COM classes.
-
-A subsequent built `X4ApoArm64.dll` was supplied and independently inspected.
 
 Validated artifact:
 
@@ -135,59 +137,77 @@ Validated artifact:
 - linked AVRT sections present: `RT_CODE`, `RT_CONST`, `RT_DATA`
 - no Creative x64 DLL imports
 
-Therefore the Stage A0 **compile/PE/export/AVRT binary gate passes**.
+Therefore the Stage A0 compile/PE/export/AVRT binary gate passes.
 
-## Current gate — offline COM probe
+## ARM64 APO Stage A0 — offline COM runtime gate PASSED
 
-Do not install or bind the APO yet.
+Canonical runtime record:
 
-A native ARM64 offline probe now exists:
+`DEBUG_HISTORY_20260905_X4_ARM64_APO_COM_PROBE_RUNTIME_SUCCESS.md`
 
-`src/x4-apo-com-probe-arm64`
+Probe:
 
-It performs only:
+`src/x4-apo-com-probe-arm64/X4ApoComProbeArm64.exe`
 
-`LoadLibraryW -> DllGetClassObject -> IClassFactory::CreateInstance -> QueryInterface`
-
-for SFX/MFX/EFX and checks:
-
-- `IAudioProcessingObject`
-- `IAudioProcessingObjectRT`
-- `IAudioProcessingObjectConfiguration`
-- `IAudioSystemEffects`
-- `IAudioSystemEffects2`
-- `IAudioSystemEffects3`
-- `IAudioProcessingObjectNotifications`
-- final `DllCanUnloadNow == S_OK`
-
-It does **not** register the DLL, call APO Initialize, touch X4 endpoints, access AudioDG, write FX properties or issue CTCDC commands.
-
-Manual workflow:
-
-`Build X4 APO ARM64 Stage A0`
-
-The artifact now stages:
-
-- `X4ApoArm64.dll`
-- `X4ApoComProbeArm64.exe`
-- `RUN-COM-PROBE.cmd`
-- APO/probe README files
-
-On the ARM64 test PC, extract them to one folder and double-click `RUN-COM-PROBE.cmd`. Do not proceed to live APO packaging/binding until it ends with:
+Runtime result on the ARM64 test PC:
 
 `RESULT: PASS`
 
-## After COM probe PASS
+For each SFX/MFX/EFX CLSID:
 
-Only then:
+- `DllGetClassObject(IClassFactory)` -> `S_OK`
+- `IClassFactory::CreateInstance(IAudioProcessingObject)` -> `S_OK`
+- QI `IAudioProcessingObject` -> PASS
+- QI `IAudioProcessingObjectRT` -> PASS
+- QI `IAudioProcessingObjectConfiguration` -> PASS
+- QI `IAudioSystemEffects` -> PASS
+- QI `IAudioSystemEffects2` -> PASS
+- QI `IAudioSystemEffects3` -> PASS
+- QI `IAudioProcessingObjectNotifications` -> PASS
 
-1. create a non-installing review `.inx` template for Windows 11 componentized APO packaging;
-2. review endpoint/interface matching against the current Microsoft `usbaudio2` ARM64 endpoint;
-3. test native AudioDG graph loading with pass-through only;
-4. add endpoint-context selection and read-only FX property access;
-5. add DSP/effect setters only after graph loading and read-only control are proven.
+After all releases:
 
-Keep SPDIF/DDL/CTUSBWrap/DGFX out of this first path.
+- `DllCanUnloadNow` -> `S_OK`
+
+This proves isolated native ARM64 DLL load, class factory creation, APO object creation, interface exposure and clean COM lifetime handling.
+
+It does **not** yet prove INF installation, real AudioDG graph initialization, `LockForProcess`, `APOProcess` inside AudioDG, endpoint binding, Creative property-store access or actual audio pass-through on Speaker/Headphone/Microphone.
+
+## Current gate — Windows 11 package review, still NON-INSTALLING
+
+Review directory:
+
+`packaging/x4-apo-arm64-review`
+
+Files:
+
+- `README.md`
+- `X4ApoComponent.inx.review`
+- `X4ApoExtension.inx.review`
+
+The component review models Microsoft's current Windows 11 `Class=AudioProcessingObject` package structure and registers the three official X4 APO CLSIDs to `X4ApoArm64.dll` plus `AudioEngine\AudioProcessingObjects` metadata.
+
+The extension review matches the X4 audio HWID and models `AddComponent`, but intentionally uses unresolved placeholder component/catalog/ExtensionId data.
+
+Most importantly, the recovered FX payload section for:
+
+- `FX\0` Speaker
+- `FX\1` Headphone
+- `FX\3` Microphone
+
+is **not referenced by the install section**. It records the official SFX/MFX/EFX/default-mode data but cannot activate endpoint FX binding as written.
+
+The files remain `.inx.review`; do not rename to `.inf` or install them.
+
+## Immediate next actions
+
+1. Resolve the actual ARM64 Microsoft `usbaudio2` devnode/interface layout used by `USB\VID_041E&PID_3278&MI_03` without writing anything.
+2. Determine the exact `PKEY_FX_Association` values/pin categories for Speaker, Headphone and Microphone on that ARM64 stack and compare them to the official SB1815 INF.
+3. Decide the final software-component identity and ExtensionId only after the target attachment point is proven.
+4. Convert the review package to a real pass-through-only test package only after those checks.
+5. First live package test must exclude Creative DSP, property writes, CTCDC writes, SPDIF/DDL, CTUSBWrap and CTUSBDGFX.
+6. After real AudioDG pass-through graph loading succeeds, add endpoint-context selection and read-only `IAudioSystemEffectsPropertyStore` access.
+7. Add one DSP feature at a time only after the read-only control plane works.
 
 ## Safety
 
@@ -195,6 +215,8 @@ Keep SPDIF/DDL/CTUSBWrap/DGFX out of this first path.
 - no new hardware state changes automatically
 - no blind `0x95` probing
 - no generic `0x23` probing
-- no live APO install before offline COM probe PASS
+- no live APO install while package attachment/association is unresolved
+- no manual FX registry writes
+- no `regsvr32` for Stage A0
 - no unrelated changes
 - no B5 ASIO changes from this branch
