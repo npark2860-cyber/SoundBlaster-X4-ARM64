@@ -18,6 +18,9 @@ jobs:
         with:
           ref: exp/windows-arm64-x4-native-controller
 
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
       - name: Build Stage A0 APO Release ARM64
         shell: pwsh
         run: |
