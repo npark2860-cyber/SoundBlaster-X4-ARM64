@@ -1,0 +1,86 @@
+name: Build X4 APO ARM64 Stage A1 Speaker Package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 X4 APO Stage A1 Speaker package
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout native-controller source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-native-controller
+
+      - name: Build Stage A0 APO Release ARM64
+        shell: pwsh
+        run: |
+          msbuild src/x4-apo-arm64/X4ApoArm64.vcxproj /m /restore /p:Configuration=Release /p:Platform=ARM64 /v:minimal
+
+      - name: Stage package and verify ARM64 PE
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD "src/x4-apo-arm64/ARM64/Release/X4ApoArm64.dll"
+          if (-not (Test-Path $dll)) {
+            $dll = Get-ChildItem -Path src/x4-apo-arm64 -Recurse -Filter X4ApoArm64.dll | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $dll -or -not (Test-Path $dll)) {
+            throw "X4ApoArm64.dll was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          New-Item -ItemType Directory -Force -Path build/x4-apo-stage-a1-speaker-package | Out-Null
+          Copy-Item $dll build/x4-apo-stage-a1-speaker-package/X4ApoArm64.dll
+          Copy-Item packaging/x4-apo-arm64-stage-a1-speaker/X4ApoArm64.inf build/x4-apo-stage-a1-speaker-package/X4ApoArm64.inf
+          Copy-Item packaging/x4-apo-arm64-stage-a1-speaker/X4ApoSpeakerExtension.inf build/x4-apo-stage-a1-speaker-package/X4ApoSpeakerExtension.inf
+          Copy-Item packaging/x4-apo-arm64-stage-a1-speaker/README.md build/x4-apo-stage-a1-speaker-package/README.md
+
+          "ARM64 PE verified: $dll"
+          "SHA256: $((Get-FileHash $dll -Algorithm SHA256).Hash)"
+
+      - name: Locate WDK InfVerif
+        id: infverif
+        shell: pwsh
+        run: |
+          $root = "${env:ProgramFiles(x86)}\Windows Kits\10\Tools"
+          $tool = Get-ChildItem -Path $root -Recurse -Filter InfVerif.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $tool) {
+            throw "WDK InfVerif.exe was not found on the runner"
+          }
+          "path=$($tool.FullName)" >> $env:GITHUB_OUTPUT
+          "Using InfVerif: $($tool.FullName)"
+
+      - name: InfVerif APO component INF
+        shell: pwsh
+        run: |
+          & "${{ steps.infverif.outputs.path }}" /v build/x4-apo-stage-a1-speaker-package/X4ApoArm64.inf
+          if ($LASTEXITCODE -ne 0) { throw "InfVerif failed for X4ApoArm64.inf with exit code $LASTEXITCODE" }
+
+      - name: InfVerif Speaker extension INF
+        shell: pwsh
+        run: |
+          & "${{ steps.infverif.outputs.path }}" /v build/x4-apo-stage-a1-speaker-package/X4ApoSpeakerExtension.inf
+          if ($LASTEXITCODE -ne 0) { throw "InfVerif failed for X4ApoSpeakerExtension.inf with exit code $LASTEXITCODE" }
+
+      - name: Upload offline Stage A1 package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-APO-ARM64-Stage-A1-Speaker-OFFLINE
+          path: build/x4-apo-stage-a1-speaker-package/*
+          if-no-files-found: error
+          retention-days: 14
