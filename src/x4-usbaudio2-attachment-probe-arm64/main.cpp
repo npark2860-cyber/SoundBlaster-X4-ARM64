@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <winioctl.h>
 #include <initguid.h>
 #include <setupapi.h>
 #include <cfgmgr32.h>
@@ -113,7 +114,8 @@ std::wstring GetSetupDiStringProperty(HDEVINFO set, SP_DEVINFO_DATA& info, DWORD
 
 void PrintHexBytes(const BYTE* data, DWORD size)
 {
-    const DWORD shown = (std::min)(size, 64u);
+    const DWORD limit = static_cast<DWORD>(64);
+    const DWORD shown = size < limit ? size : limit;
     for (DWORD i = 0; i < shown; ++i)
     {
         ::wprintf(L"%02X", data[i]);
