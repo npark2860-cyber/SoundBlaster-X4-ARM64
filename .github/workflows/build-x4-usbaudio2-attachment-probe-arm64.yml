@@ -1,0 +1,60 @@
+name: Build X4 usbaudio2 Attachment Probe ARM64
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 X4 read-only usbaudio2 attachment probe
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout native-controller source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-native-controller
+
+      - name: Configure ARM64
+        shell: pwsh
+        run: |
+          cmake -S src/x4-usbaudio2-attachment-probe-arm64 -B build/x4-usbaudio2-attachment-probe-arm64 -G "Visual Studio 17 2022" -A ARM64
+
+      - name: Build Release ARM64
+        shell: pwsh
+        run: |
+          cmake --build build/x4-usbaudio2-attachment-probe-arm64 --config Release --target x4-usbaudio2-attachment-probe --parallel
+
+      - name: Verify ARM64 PE and stage
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "build/x4-usbaudio2-attachment-probe-arm64/Release/x4-usbaudio2-attachment-probe.exe"
+          if (-not (Test-Path $exe)) {
+            throw "$exe was not produced"
+          }
+
+          $bytes = [System.IO.File]::ReadAllBytes($exe)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) {
+            throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine)
+          }
+
+          "ARM64 PE verified: $exe"
+          "SHA256: $((Get-FileHash $exe -Algorithm SHA256).Hash)"
+
+          New-Item -ItemType Directory -Force -Path dist/x4-usbaudio2-attachment-probe-arm64 | Out-Null
+          Copy-Item $exe dist/x4-usbaudio2-attachment-probe-arm64/x4-usbaudio2-attachment-probe.exe
+          Copy-Item src/x4-usbaudio2-attachment-probe-arm64/RUN-ATTACHMENT-PROBE.cmd dist/x4-usbaudio2-attachment-probe-arm64/RUN-ATTACHMENT-PROBE.cmd
+          Copy-Item src/x4-usbaudio2-attachment-probe-arm64/README.md dist/x4-usbaudio2-attachment-probe-arm64/README.md
+
+      - name: Upload attachment probe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-usbaudio2-Attachment-Probe-ARM64
+          path: dist/x4-usbaudio2-attachment-probe-arm64/*
+          if-no-files-found: error
+          retention-days: 14
