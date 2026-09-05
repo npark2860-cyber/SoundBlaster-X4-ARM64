@@ -1,0 +1,199 @@
+name: Build X4 APO ARM64 Stage A2 Speaker Live Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows ARM64 X4 APO Stage A2 signed Speaker test package
+    runs-on: windows-2022
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout native-controller source
+        uses: actions/checkout@v4
+        with:
+          ref: exp/windows-arm64-x4-native-controller
+
+      - name: Locate MSBuild
+        id: msbuild
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe was not found: $vswhere" }
+          $install = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath
+          if (-not $install) { throw "Visual Studio installation containing MSBuild was not found" }
+          $tool = Join-Path $install "MSBuild\Current\Bin\MSBuild.exe"
+          if (-not (Test-Path $tool)) { throw "MSBuild.exe was not found: $tool" }
+          "path=$tool" >> $env:GITHUB_OUTPUT
+          "Using MSBuild: $tool"
+
+      - name: Build Stage A0 APO Release ARM64
+        shell: pwsh
+        run: |
+          $msbuild = "${{ steps.msbuild.outputs.path }}"
+          & $msbuild "src/x4-apo-arm64/X4ApoArm64.vcxproj" /m /restore "/p:Configuration=Release" "/p:Platform=ARM64" /v:minimal
+          if ($LASTEXITCODE -ne 0) { throw "MSBuild failed with exit code $LASTEXITCODE" }
+
+      - name: Stage A2 package and verify ARM64 PE
+        shell: pwsh
+        run: |
+          $dll = Join-Path $PWD "src/x4-apo-arm64/ARM64/Release/X4ApoArm64.dll"
+          if (-not (Test-Path $dll)) {
+            $dll = Get-ChildItem -Path src/x4-apo-arm64 -Recurse -Filter X4ApoArm64.dll | Select-Object -First 1 -ExpandProperty FullName
+          }
+          if (-not $dll -or -not (Test-Path $dll)) { throw "X4ApoArm64.dll was not produced" }
+
+          $bytes = [System.IO.File]::ReadAllBytes($dll)
+          $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+          $machine = [BitConverter]::ToUInt16($bytes, $peOffset + 4)
+          if ($machine -ne 0xAA64) { throw ("Expected ARM64 PE machine 0xAA64, got 0x{0:X4}" -f $machine) }
+
+          $stage = Join-Path $PWD "build/x4-apo-stage-a2-speaker-live"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item $dll (Join-Path $stage "X4ApoArm64.dll")
+          Copy-Item packaging/x4-apo-arm64-stage-a2-speaker-live/X4ApoArm64.inf $stage
+          Copy-Item packaging/x4-apo-arm64-stage-a2-speaker-live/X4ApoSpeakerExtension.inf $stage
+          Copy-Item packaging/x4-apo-arm64-stage-a2-speaker-live/X4ApoStageA2.ps1 $stage
+          Copy-Item packaging/x4-apo-arm64-stage-a2-speaker-live/README.md $stage
+
+          "ARM64 PE verified: $dll"
+          "Unsigned DLL SHA256: $((Get-FileHash $dll -Algorithm SHA256).Hash)"
+
+      - name: Parse Stage A2 PowerShell runner
+        shell: powershell
+        run: |
+          $path = (Resolve-Path "build/x4-apo-stage-a2-speaker-live/X4ApoStageA2.ps1").Path
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -ne 0) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            throw "Stage A2 PowerShell parser found $($errors.Count) error(s)"
+          }
+          "PowerShell syntax PASS"
+
+      - name: Locate WDK validation and signing tools
+        id: wdk
+        shell: pwsh
+        run: |
+          $toolsRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\Tools"
+          $infverif = Get-ChildItem -Path $toolsRoot -Recurse -Filter InfVerif.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $infverif) { throw "WDK InfVerif.exe was not found" }
+
+          $binRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+          $inf2cat = Get-ChildItem -Path $binRoot -Recurse -Filter Inf2Cat.exe -ErrorAction SilentlyContinue |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $inf2cat) { throw "WDK Inf2Cat.exe was not found" }
+
+          $signtool = Get-ChildItem -Path $binRoot -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) { throw "WDK x64 signtool.exe was not found" }
+
+          "infverif=$($infverif.FullName)" >> $env:GITHUB_OUTPUT
+          "inf2cat=$($inf2cat.FullName)" >> $env:GITHUB_OUTPUT
+          "signtool=$($signtool.FullName)" >> $env:GITHUB_OUTPUT
+          "InfVerif: $($infverif.FullName)"
+          "Inf2Cat: $($inf2cat.FullName)"
+          "SignTool: $($signtool.FullName)"
+
+      - name: InfVerif APO component INF
+        shell: pwsh
+        run: |
+          & "${{ steps.wdk.outputs.infverif }}" /v build/x4-apo-stage-a2-speaker-live/X4ApoArm64.inf
+          if ($LASTEXITCODE -ne 0) { throw "InfVerif failed for X4ApoArm64.inf with exit code $LASTEXITCODE" }
+
+      - name: InfVerif Speaker extension INF
+        shell: pwsh
+        run: |
+          & "${{ steps.wdk.outputs.infverif }}" /v build/x4-apo-stage-a2-speaker-live/X4ApoSpeakerExtension.inf
+          if ($LASTEXITCODE -ne 0) { throw "InfVerif failed for X4ApoSpeakerExtension.inf with exit code $LASTEXITCODE" }
+
+      - name: Create ephemeral test certificate, sign DLL, build and sign catalogs
+        shell: powershell
+        run: |
+          $stage = (Resolve-Path "build/x4-apo-stage-a2-speaker-live").Path
+          $signtool = "${{ steps.wdk.outputs.signtool }}"
+          $inf2cat = "${{ steps.wdk.outputs.inf2cat }}"
+
+          $cert = New-SelfSignedCertificate `
+            -Type CodeSigningCert `
+            -Subject "CN=SoundBlaster-X4-ARM64 Stage A2 Test" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -KeyAlgorithm RSA `
+            -KeyLength 3072 `
+            -HashAlgorithm SHA256 `
+            -KeyExportPolicy NonExportable `
+            -NotAfter (Get-Date).AddDays(30)
+
+          Export-Certificate -Cert $cert -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") | Out-Null
+          Import-Certificate -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") -CertStoreLocation "Cert:\CurrentUser\Root" | Out-Null
+          Import-Certificate -FilePath (Join-Path $stage "X4ApoStageA2Test.cer") -CertStoreLocation "Cert:\CurrentUser\TrustedPublisher" | Out-Null
+
+          & $signtool sign /sha1 $cert.Thumbprint /s My /fd SHA256 /v (Join-Path $stage "X4ApoArm64.dll")
+          if ($LASTEXITCODE -ne 0) { throw "SignTool failed while signing X4ApoArm64.dll" }
+
+          & $inf2cat "/driver:$stage" /os:10_GE_ARM64 /verbose
+          if ($LASTEXITCODE -ne 0) { throw "Inf2Cat failed with exit code $LASTEXITCODE" }
+
+          foreach ($catalog in @('X4ApoArm64.cat', 'X4ApoSpeakerExtension.cat')) {
+            $path = Join-Path $stage $catalog
+            if (-not (Test-Path $path)) { throw "Inf2Cat did not produce $catalog" }
+            & $signtool sign /sha1 $cert.Thumbprint /s My /fd SHA256 /v $path
+            if ($LASTEXITCODE -ne 0) { throw "SignTool failed while signing $catalog" }
+          }
+
+          foreach ($file in @('X4ApoArm64.dll', 'X4ApoArm64.cat', 'X4ApoSpeakerExtension.cat')) {
+            $path = Join-Path $stage $file
+            & $signtool verify /pa /v $path
+            if ($LASTEXITCODE -ne 0) { throw "SignTool verification failed for $file" }
+          }
+
+          "Test certificate thumbprint: $($cert.Thumbprint)"
+          "Signed DLL SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoArm64.dll') -Algorithm SHA256).Hash)"
+          "APO catalog SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoArm64.cat') -Algorithm SHA256).Hash)"
+          "Extension catalog SHA256: $((Get-FileHash (Join-Path $stage 'X4ApoSpeakerExtension.cat') -Algorithm SHA256).Hash)"
+
+          Remove-Item ("Cert:\CurrentUser\TrustedPublisher\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
+          Remove-Item ("Cert:\CurrentUser\Root\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
+          Remove-Item ("Cert:\CurrentUser\My\" + $cert.Thumbprint) -Force -ErrorAction SilentlyContinue
+
+      - name: Verify final Stage A2 artifact file set
+        shell: pwsh
+        run: |
+          $stage = "build/x4-apo-stage-a2-speaker-live"
+          $expected = @(
+            'X4ApoArm64.dll',
+            'X4ApoArm64.inf',
+            'X4ApoArm64.cat',
+            'X4ApoSpeakerExtension.inf',
+            'X4ApoSpeakerExtension.cat',
+            'X4ApoStageA2Test.cer',
+            'X4ApoStageA2.ps1',
+            'README.md'
+          )
+          $actual = @(Get-ChildItem $stage -File | Select-Object -ExpandProperty Name | Sort-Object)
+          $expectedSorted = @($expected | Sort-Object)
+          if (($actual -join "`n") -ne ($expectedSorted -join "`n")) {
+            "Expected:"; $expectedSorted
+            "Actual:"; $actual
+            throw "Unexpected Stage A2 artifact file set"
+          }
+          "Final Stage A2 file set PASS: $($actual.Count) files"
+
+      - name: Upload signed Stage A2 Speaker live-test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundBlaster-X4-APO-ARM64-Stage-A2-Speaker-LIVE-TEST
+          path: build/x4-apo-stage-a2-speaker-live/*
+          if-no-files-found: error
+          retention-days: 14
