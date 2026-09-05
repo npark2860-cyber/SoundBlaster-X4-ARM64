@@ -1,5 +1,4 @@
 #include <initguid.h>
-#include <mmdeviceapi.h>
 
 #include "X4Apo.h"
 
@@ -79,25 +78,36 @@ void CX4PassThroughApoBase::APOProcess(
     const UINT32 frameCount = input->u32ValidFrameCount;
     const UINT32 sampleCount = frameCount * GetSamplesPerFrame();
 
-    FLOAT32* const inputSamples = static_cast<FLOAT32*>(input->pBuffer);
-    FLOAT32* const outputSamples = static_cast<FLOAT32*>(output->pBuffer);
+    FLOAT32* const inputSamples = reinterpret_cast<FLOAT32*>(input->pBuffer);
+    FLOAT32* const outputSamples = reinterpret_cast<FLOAT32*>(output->pBuffer);
 
-    if (outputSamples != inputSamples && outputSamples != nullptr)
+    switch (input->u32BufferFlags)
     {
-        if (input->u32BufferFlags == BUFFER_SILENT || inputSamples == nullptr)
+    case BUFFER_SILENT:
+        if (outputSamples != nullptr)
         {
             for (UINT32 i = 0; i < sampleCount; ++i)
             {
                 outputSamples[i] = 0.0f;
             }
         }
-        else if (input->u32BufferFlags == BUFFER_VALID)
+        break;
+
+    case BUFFER_VALID:
+        if (outputSamples != nullptr && inputSamples != nullptr && outputSamples != inputSamples)
         {
             for (UINT32 i = 0; i < sampleCount; ++i)
             {
                 outputSamples[i] = inputSamples[i];
             }
         }
+        break;
+
+    case BUFFER_INVALID:
+    default:
+        // BUFFER_INVALID is not expected from a valid locked graph. Do not
+        // touch the sample buffer; propagate the flag/count below.
+        break;
     }
 
     output->u32BufferFlags = input->u32BufferFlags;
