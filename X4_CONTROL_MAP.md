@@ -12,8 +12,9 @@ Source binary hashes:
 - `Creative.Platform.Mixer.dll` SHA-256 `33f6ac6c84e093c766e8b483660d49518a8a0c14da144bd7a6a4f8bf0a79ae45`
 - `CTCDC.dll` SHA-256 `bc4010e8f7000bfe6217425a0622dd710a7626d90fb61008505337aa87a43dab`
 - `CTIntrfu.dll` SHA-256 `ecf098101a0663568f4a406d7bed9775565a67213930e2487c17d858a5d0d9b6`
+- `MalLgcy.dll` SHA-256 `bf2ba6d85fa1cdf20a2fa866d153cefa1e5e7f9af87107d83963ed393e4591aa`
 
-The Devices/CTCDC/CTIntrfu hashes match the previously recorded controller baseline exactly.
+The supplied `MalLgcy.dll` is x86 / PE32. Its relevant Mixer exports forward unchanged to `CTAudEp.dll` imports.
 
 ## Confirmed CDCRawCommand values
 
@@ -210,21 +211,33 @@ No `0x23` SET is authorized.
 
 ## Windows Mixer backend
 
-`Creative.Platform.Mixer.dll` routes ordinary mixer controls through `ICTMalLgcyLibrary` / native `MalLgcy.dll` using Windows endpoint/topology/KS objects.
+Managed path:
 
-| Control | Managed path | Native mode |
+`Creative.Platform.Mixer.dll`
+-> `ICTMalLgcyLibrary`
+-> `MalLgcy.dll!CSCT*`
+-> `CTAudEp.dll!CT*`
+
+`MalLgcy.dll` native forwarding was confirmed in:
+
+`DEBUG_HISTORY_20260905_MALLGCY_NATIVE_FORWARD_TRACE.md`
+
+| Control | Managed mode | MalLgcy forwarding target |
 |---|---|---|
-| Endpoint master volume | `MixerLine` | `fScalar=true` |
-| Endpoint channel volume | `MixerLine` | `fScalar=true` |
-| Monitoring level | `MonitorLine` | `fScalar=true` |
-| Mic Boost | KS node volume | `fScalar=false` / dB path |
-| Mic AGC | KS node auto-gain | boolean/control path |
+| Endpoint master volume | `fScalar=true` | `CTGetMasterVolume` / `CTSetMasterVolume` |
+| Endpoint channel volume | `fScalar=true` | `CTGetChannelVolume` / `CTSetChannelVolume` |
+| Monitoring level | `fScalar=true` | `CTGetVolumeLevelOfMonitoringControl` / setters |
+| Monitoring range | float dB range contract | `CTGetVolumeLevelRangeOfMonitoringControl` |
+| Mic Boost | `fScalar=false` / dB path | KS node type volume APIs |
+| Mic AGC | boolean/control path | KS node auto-gain APIs |
 
-`MixerLine` and `MonitorLine` convert normalized scalar floats to/from managed 0..100.
+The MalLgcy wrappers pass the original parameters unchanged and perform no scalar/dB/fixed-point conversion.
 
-KS/monitoring range signatures explicitly name their range outputs `MinLevelDB` / `MaxLevelDB`.
+`MixerLine` and `MonitorLine` convert normalized scalar floats to/from managed 0..100 before/after this native boundary.
 
-The exact CDC raw `UInt16` fixed-point-to-dB conversion for `0x22/0x23` is not implemented in the recovered Devices path and remains to be located before hard-coding a conversion.
+The supplied MalLgcy binary is x86 PE32, so an ARM64-native controller cannot use this exact DLL in-process. The target implementation should reproduce the endpoint/topology/KS behavior directly with native Windows APIs after the underlying `CTAudEp.dll` implementation is recovered.
+
+The exact CDC raw `UInt16` fixed-point-to-dB conversion for `0x22/0x23` is unrelated to this MalLgcy forwarding layer and remains to be located before hard-coding a conversion.
 
 ## Sound Mode control (`0xA7`)
 
@@ -279,4 +292,4 @@ Probe path:
 
 `src/x4-control-readonly-probe`
 
-No new runtime probe is required for the recovered `0x23` backend split. Continue static recovery before any new state-changing command.
+No new runtime probe is required for the recovered `0x23` backend split or MalLgcy forwarding path. Continue static recovery before any new state-changing command.
